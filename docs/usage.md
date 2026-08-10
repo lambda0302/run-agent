@@ -1,6 +1,6 @@
 # 用法
 
-> V0 为最小可用形态：单条 prompt 调一次模型。多提供商、配置系统、agent loop 将在 V1 起交付。
+> V1（0.1.0）：完整的 ReAct agent——单条 prompt 或交互式 REPL，可自动读/写/改文件、搜索、执行命令。
 
 ## 安装
 
@@ -8,19 +8,97 @@
 npm install -g run-agent
 ```
 
+需要 Node ≥ 20。
+
 ## 基本用法
 
 ```bash
 run-agent --help
 run-agent --version
-run-agent "你好，请用一句话自我介绍"
-run-agent -m claude-sonnet-5 "解释什么是纯函数"
+
+# 单条 prompt（一次性执行）
+run-agent "给 src/core/query.ts 加注释"
+
+# 交互式 REPL（不带参数）
+run-agent
 ```
 
-## 环境变量
+## CLI 选项
 
-| 变量                | 用途                         |
-| ------------------- | ---------------------------- |
-| `ANTHROPIC_API_KEY` | Anthropic API key（V0 必填） |
+| 选项                 | 说明                                                                              |
+| -------------------- | --------------------------------------------------------------------------------- |
+| `-p, --provider <p>` | `anthropic`（默认）/ `openai` / `openai-compatible` / `ollama`                    |
+| `-m, --model <m>`    | 模型名，如 `claude-sonnet-5`、`deepseek-chat`、`gpt-4o-mini`                      |
+| `-b, --base-url <u>` | API 端点（`openai-compatible` 必填；Ollama 默认指向 `http://localhost:11434/v1`） |
+| `-k, --api-key <k>`  | 显式 API key（优先级最高）                                                        |
+| `-r, --resume`       | 续接最近一次会话                                                                  |
 
-V1 起将支持 `~/.config/run-agent/config.json` 与 `.env`，并支持 OpenAI / Ollama / OpenAI 兼容模型（如 DeepSeek）。
+## 配置优先级
+
+`CLI flag > 环境变量 > 配置文件 > 默认值`
+
+### 环境变量
+
+| 变量                                                                                                                                     | 用途         |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| `ANTHROPIC_API_KEY`                                                                                                                      | Anthropic    |
+| `OPENAI_API_KEY`                                                                                                                         | OpenAI       |
+| `RUN_AGENT_PROVIDER` / `RUN_AGENT_MODEL` / `RUN_AGENT_BASE_URL` / `RUN_AGENT_API_KEY` / `RUN_AGENT_API_KEY_ENV` / `RUN_AGENT_MAX_TOKENS` | 覆盖对应配置 |
+
+### 配置文件
+
+`~/.config/run-agent/config.json`：
+
+```json
+{
+  "provider": "openai-compatible",
+  "model": "deepseek-chat",
+  "baseURL": "https://api.deepseek.com/v1",
+  "apiKeyEnv": "DEEPSEEK_API_KEY"
+}
+```
+
+### `.env`
+
+项目根目录的 `.env` 会被自动加载（极简 loader，支持 `KEY=VALUE` 行与 `#` 注释）。
+
+## 提供商示例
+
+```bash
+# Anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+run-agent --provider anthropic --model claude-sonnet-5 "修复这个仓库的测试"
+
+# DeepSeek（OpenAI 兼容）
+export DEEPSEEK_API_KEY=sk-...
+run-agent --provider openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat "给函数加注释"
+
+# 本地 Ollama
+ollama pull qwen2.5
+run-agent --provider ollama --model qwen2.5 "介绍一下这个项目"
+```
+
+## REPL
+
+不带参数运行 `run-agent` 进入交互式 REPL：
+
+```
+run-agent> 把 README 里 Hello 改成 Hi
+⚡ read_file {"file_path":"README.md"}
+└ read_file: ——— F:/MyClaudeCode/run-agent/README.md · 90 行 1-31 ———
+📝 …（模型流式输出）…
+run-agent> /help
+```
+
+- `/clear`：清空上下文
+- `/help`：帮助
+- `/exit` / `/quit`：退出
+
+## 会话与续接
+
+每次运行都会把内部消息逐行追加到 `~/.local/share/run-agent/sessions/<ts>-<id>.jsonl`。
+
+```bash
+run-agent --resume            # 续接最近会话进入 REPL
+run-agent --resume "继续"      # 在最近会话上下文中追加一条 prompt
+```

@@ -17,7 +17,7 @@ npm run smoke      # build + 冒烟（--version / --help）
 
 | 命令                   | 作用                                          |
 | ---------------------- | --------------------------------------------- |
-| `npm run dev`          | 尚未启用；V1 引入 tsup --watch                |
+| `npm run dev`          | tsup --watch（改源码自动重新打包）            |
 | `npm run typecheck`    | TypeScript 类型检查（tsc --noEmit）           |
 | `npm run lint`         | ESLint 检查                                   |
 | `npm run lint:fix`     | ESLint 自动修复                               |
@@ -29,13 +29,17 @@ npm run smoke      # build + 冒烟（--version / --help）
 
 ## 测试说明
 
-- `tests/providers/anthropic.test.ts`：mock SDK 的单测，**不依赖真实 API key**。
-- `tests/cli.test.ts`：对 `dist/cli.js` 的冒烟测试，验证可执行性与帮助信息；**必须先生成 dist**（`npm test` 已内置 build）。
+- provider 适配器测试（`tests/providers/`）：mock SDK，覆盖流式 + tool_use / function calling 互转，**不依赖真实 API key**。
+- `tests/config.test.ts`：配置优先级矩阵；`tests/core/query.test.ts`：mock LLM 驱动的 agent loop golden 场景。
+- `tests/tools/`：Edit / Glob / Grep / Bash / zod→JSONSchema 单测。
+- `tests/cli.test.ts`：对 `dist/cli.js` 的冒烟测试，验证可执行性、帮助信息与错误退出；**必须先生成 dist**（`npm test` 已内置 build）。
 - 真实模型调用请在本地手动验证（需要 API key）：
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 node dist/cli.js "你好，请用一句话自我介绍"
+# 或进入 REPL
+node dist/cli.js
 ```
 
 ## CI

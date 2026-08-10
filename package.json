@@ -1,6 +1,6 @@
 {
   "name": "run-agent",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A transparent, multi-provider coding agent for your terminal.",
   "type": "module",
   "license": "MIT",
@@ -15,6 +15,7 @@
   },
   "scripts": {
     "build": "tsup",
+    "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && vitest run",
     "test:watch": "vitest",
@@ -34,7 +35,9 @@
   ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
-    "commander": "^15.0.0"
+    "commander": "^15.0.0",
+    "openai": "^7.4.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

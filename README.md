@@ -2,34 +2,108 @@
 
 [![CI](https://github.com/lambda0302/run-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/lambda0302/run-agent/actions/workflows/ci.yml)
 
-A transparent, multi-provider coding agent for your terminal.
+一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 状态：**V0 项目地基**——工程骨架已就绪。核心编码能力（agent loop、多提供商、内置工具）将从 V1 起逐步交付，见 [Plan.md](https://github.com/lambda0302/run-agent/blob/main/docs/Plan.md)。
+> 当前版本：**0.1.0**（V1 · ReAct MVP + 多提供商）。路线图见 [Plan.md](docs/Plan.md)。
 
-## 快速开始（占位，V1 完善）
+## 快速开始
 
 ```bash
+# 全局安装
 npm install -g run-agent
-run-agent "你好，请用一句话自我介绍"
+
+# 设置模型 API key（以 Anthropic 为例）
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# 单条 prompt：agent 会自动读文件 → 改文件 → 跑测试 → 汇报
+run-agent "把 README 里的大标题改成 'Run Agent'"
+
+# 不带 prompt 进入交互式 REPL
+run-agent
 ```
 
-需要设置模型 API key，例如：
+在 Windows（PowerShell）下等价写法：
+
+```powershell
+$env:ANTHROPIC_API_KEY="sk-ant-..."
+run-agent "把 README 里的大标题改成 'Run Agent'"
+```
+
+macOS / Linux 支持 bash/zsh；Windows 使用 PowerShell（无需额外安装）。
+
+## 多提供商
+
+`run-agent` 用一个内部统一的消息格式对接多家模型，配置优先级：**CLI flag > 环境变量 > 配置文件 > 默认值**。
+
+| Provider            | 覆盖模型                          | 设置方式                                   |
+| ------------------- | --------------------------------- | ------------------------------------------ |
+| `anthropic`（默认） | Claude                            | `ANTHROPIC_API_KEY`                        |
+| `openai`            | GPT                               | `OPENAI_API_KEY`                           |
+| `openai-compatible` | DeepSeek / Qwen / vLLM / 本地推理 | `--base-url` + `DEEPSEEK_API_KEY` 等       |
+| `ollama`            | 本地 Ollama                       | 无需 key，默认 `http://localhost:11434/v1` |
+
+### 示例
+
+**Anthropic（默认）**
 
 ```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+run-agent --provider anthropic --model claude-sonnet-5 "修复这个仓库的测试"
 ```
 
-## 特性（占位，V1 填充）
+**DeepSeek（OpenAI 兼容）**
 
-- **多提供商**：Anthropic / OpenAI / 本地 Ollama / OpenAI 兼容模型（如 DeepSeek）
-- **编码 agent**：读代码、改代码、跑命令、跑测试
-- 权限审批、上下文管理、MCP、多 Agent 编排
+```bash
+export DEEPSEEK_API_KEY=sk-...
+run-agent --provider openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat "给函数加注释"
+```
+
+**本地 Ollama**
+
+```bash
+ollama pull qwen2.5
+run-agent --provider ollama --model qwen2.5 "介绍一下这个项目"
+```
+
+### 配置文件
+
+也可以把偏好写进 `~/.config/run-agent/config.json`：
+
+```json
+{
+  "provider": "openai-compatible",
+  "model": "deepseek-chat",
+  "baseURL": "https://api.deepseek.com/v1",
+  "apiKeyEnv": "DEEPSEEK_API_KEY"
+}
+```
+
+支持 `.env`：在项目根放 `.env`，`run-agent` 会自动加载。
+
+### 续接会话
+
+```bash
+run-agent --resume          # 续接最近一次会话（进入 REPL）
+run-agent --resume "继续"   # 在最近会话上下文上执行
+```
+
+会话以 JSONL 逐行追加在 `~/.local/share/run-agent/sessions/`。
+
+## 特性
+
+- **ReAct agent loop**：流式输出 + 工具调用循环，停止条件 / 截断恢复 / 错误重试
+- **6 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）
+- **多提供商**：一套抽象对接 Anthropic / OpenAI / OpenAI 兼容 / Ollama
+- **透明**：REPL 里实时看到模型文本增量与每次工具调用及结果
+- **会话持久化**：JSONL 追加、`--resume` 原样回放
+
+V1 暂不包含（路线图 V2+）：权限审批 / Trust、工具并发、上下文压缩、CLAUDE.md、repo map、MCP、Hooks、多 agent、TUI。
 
 ## 文档
 
 - [架构](docs/architecture.md)
 - [本地开发](docs/development.md)
 - [用法](docs/usage.md)
+- [路线图](docs/Plan.md) · [V0 交付](docs/Plan_V0.md) · [V1 实施方案](docs/Plan_V1.md)
 
 ## 贡献
 
