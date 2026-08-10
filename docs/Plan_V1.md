@@ -176,14 +176,14 @@ tests/cli.test.ts             # 更新：--resume / --provider 冒烟
 
 ## 5. V1 验收清单（DoD）
 
-> 状态截至 2026-08-10：代码与测试全部完成；带 `(需真实 key)` 的项需用户本地手动验证。
+> 状态截至 2026-08-10：代码与测试全部完成，已推送到远端，CI 三 OS × 3 Node 全绿，tag `v0.1.0` 已打；带 `(需真实 key)` 的项需用户本地手动验证。
 
 - [x] 代码就绪：`npm install -g run-agent` + README 快速开始即可用（待发版验证）
 - [ ] 三种模型来源（Anthropic / DeepSeek / Ollama）都跑通一次 agent loop（需真实 key，本地手动）
 - [x] loop 集成测试（mock LLM）绿；Edit/Bash/Glob/Grep 工具单测绿
 - [x] `--resume` 能续接会话（sessionStorage 单测）；`--provider/--model/--base-url` 命令行切换生效
-- [ ] CI 三 OS × 3 Node 全绿（推送到远端后验证）；`npm pack` tarball 干净（dry-run 已验证）
-- [x] CHANGELOG 记 `0.1.0`；package.json 版本 `0.1.0`；`v0.1.0` tag 待推送后打
+- [x] CI 三 OS × 3 Node 全绿（run #5 通过）；`npm pack` tarball 干净（dry-run 已验证）
+- [x] CHANGELOG 记 `0.1.0`；package.json 版本 `0.1.0`；tag `v0.1.0` 已推送
 
 ## 6. 风险与注意
 
