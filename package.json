@@ -1,0 +1,48 @@
+{
+  "name": "run-agent",
+  "version": "0.0.0",
+  "description": "A transparent, multi-provider coding agent for your terminal.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "run-agent": "dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "smoke": "npm run build && node dist/cli.js --version && node dist/cli.js --help"
+  },
+  "keywords": [
+    "cli",
+    "agent",
+    "coding-agent",
+    "llm",
+    "ai",
+    "terminal"
+  ],
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "eslint": "^10.8.1",
+    "prettier": "^3.9.6",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.66.0",
+    "vitest": "^4.1.10"
+  }
+}
