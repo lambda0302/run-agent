@@ -1,15 +1,29 @@
 import { Command } from "commander";
+import path from "node:path";
 import pkg from "../../package.json" with { type: "json" };
 import { loadConfig, resolveApiKey } from "../config/index.js";
 import { loadDotEnv } from "../config/load.js";
+import { hasPermissionsToUseTool, inputPath } from "../permissions/engine.js";
+import { askTrustProject, resolveAsk } from "../permissions/prompt.js";
+import {
+  addTrustedProject,
+  isProjectTrusted,
+  loadRules,
+  loadTrustedProjects,
+  removeTrustedProject,
+} from "../permissions/store.js";
+import type { Decision, PermissionContext, PermissionMode } from "../permissions/types.js";
 import { createClient } from "../providers/index.js";
 import type { LLMMessage, ProviderName } from "../providers/types.js";
 import { TOOLS } from "../tools.js";
+import type { Tool } from "../tools.js";
 import { RunAgentError } from "../utils/errors.js";
 import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
 
 const program = new Command();
+
+const PERMISSION_MODES = ["default", "acceptEdits", "bypass"] as const;
 
 program
   .name("run-agent")
@@ -24,6 +38,9 @@ program
   )
   .option("-k, --api-key <apiKey>", "API key (overrides env var / config file)")
   .option("-r, --resume", "resume the latest session instead of starting a new one")
+  .option("-M, --mode <mode>", `permission mode: ${PERMISSION_MODES.join(" | ")} (default)`)
+  .option("--dangerously-skip-permissions", "bypass all permission checks (mode=bypass)")
+  .option("-t, --trust", "trust the current project directory (skips the Trust prompt)")
   .action(async (prompt: string | undefined, opts: Record<string, unknown>) => {
     try {
       await main(prompt, opts);
@@ -34,12 +51,45 @@ program
     }
   });
 
+/** 管理受信任项目：run-agent trust [path]（默认当前目录）/ --list / --remove。 */
+program
+  .command("trust")
+  .description("manage trusted projects (Trust boundary against prompt injection)")
+  .argument("[path]", "project path (defaults to current directory)")
+  .option("--list", "list all trusted projects")
+  .option("--remove", "remove trust for the given path")
+  .action((p: string | undefined, opts: { list?: boolean; remove?: boolean }) => {
+    const target = p ? p : process.cwd();
+    if (opts.list) {
+      const list = loadTrustedProjects();
+      if (list.length === 0) process.stdout.write("（空）\n");
+      for (const t of list) process.stdout.write(`${t}\n`);
+    } else if (opts.remove) {
+      removeTrustedProject(target);
+      process.stdout.write(`已移除信任: ${path.resolve(target)}\n`);
+    } else {
+      addTrustedProject(target);
+      process.stdout.write(`已信任: ${path.resolve(target)}\n`);
+    }
+  });
+
 interface CliOpts {
   provider?: string;
   model?: string;
   baseUrl?: string;
   apiKey?: string;
   resume?: boolean;
+  mode?: string;
+  dangerouslySkipPermissions?: boolean;
+  trust?: boolean;
+}
+
+/** 解析权限模式：--dangerously-skip-permissions > --mode > RUN_AGENT_MODE > config > default */
+function resolveMode(opts: CliOpts, configMode: string | undefined): PermissionMode {
+  if (opts.dangerouslySkipPermissions) return "bypass";
+  const raw = opts.mode ?? process.env.RUN_AGENT_MODE ?? configMode;
+  if (raw && (PERMISSION_MODES as readonly string[]).includes(raw)) return raw as PermissionMode;
+  return "default";
 }
 
 async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
@@ -68,7 +118,40 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
   });
 
-  // 会话：--resume 读最新会话，否则新建
+  // ── V2 权限上下文 ──────────────────────────────────────────────
+  const mode = resolveMode(opts, cfg.permissionMode);
+  const isTTY = Boolean(process.stdin.isTTY);
+  const canPrompt = isTTY && !prompt; // 仅交互 REPL 才弹确认；one-shot 一律降级 deny
+  const cwd = process.cwd();
+
+  let isTrusted = isProjectTrusted(cwd, loadTrustedProjects());
+  if (opts.trust) {
+    addTrustedProject(cwd);
+    isTrusted = true;
+  } else if (!isTrusted && canPrompt) {
+    isTrusted = await askTrustProject(cwd);
+    if (isTrusted) addTrustedProject(cwd);
+  }
+
+  const rules = [...loadRules()];
+  if (isTrusted) {
+    // 受信任项目才加载项目级规则（防提示注入：恶意项目的规则不生效）
+    rules.push(...loadRules(path.join(cwd, ".run-agent", "permissions.json")));
+  }
+
+  const ctx: PermissionContext = { mode, rules, canPrompt, isTrusted };
+  const checkPermission = async (tool: Tool, input: unknown): Promise<Decision> => {
+    const d = hasPermissionsToUseTool(tool.name, input, mode, rules);
+    if (d !== "ask") return d;
+    const resolved = await resolveAsk(tool, input, ctx);
+    if (resolved === "deny") {
+      const target = inputPath(input);
+      process.stderr.write(`✗ 已拒绝执行 ${tool.name}${target ? ` ${target}` : ""}（未获授权）\n`);
+    }
+    return resolved;
+  };
+
+  // ── 会话：--resume 读最新会话，否则新建 ─────────────────────────
   let sessionFile: string;
   let initialMessages: LLMMessage[] = [];
   if (opts.resume) {
@@ -88,6 +171,7 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ...(cfg.maxTokens ? { maxTokens: cfg.maxTokens } : {}),
     sessionFile,
     initialMessages,
+    checkPermission,
   };
 
   if (prompt) {

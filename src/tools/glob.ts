@@ -98,6 +98,7 @@ export const globTool: Tool = {
     "Find files by glob pattern, e.g. '**/*.ts' or 'src/**/*.{ts,tsx}'. " +
     "Skips .git and node_modules by default. Returns up to 1000 matches.",
   inputSchema: schema,
+  isConcurrencySafe: true,
   async call(input): Promise<ToolCallResult> {
     const { pattern, path: baseDir, ignore } = schema.parse(input);
     const ignoreSet = new Set([...ALWAYS_IGNORE, ...(ignore ?? [])]);

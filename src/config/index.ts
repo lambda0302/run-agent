@@ -12,6 +12,8 @@ export interface RunAgentConfig {
   /** 从哪个环境变量读 API key（覆盖默认约定） */
   apiKeyEnv?: string;
   maxTokens?: number;
+  /** V2 权限模式：default | acceptEdits | bypass */
+  permissionMode?: string;
 }
 
 /** CLI flag 覆盖项（优先级最高） */
@@ -54,6 +56,7 @@ function envConfig(): Partial<RunAgentConfig> {
   if (process.env.RUN_AGENT_BASE_URL) c.baseURL = process.env.RUN_AGENT_BASE_URL;
   if (process.env.RUN_AGENT_API_KEY) c.apiKey = process.env.RUN_AGENT_API_KEY;
   if (process.env.RUN_AGENT_API_KEY_ENV) c.apiKeyEnv = process.env.RUN_AGENT_API_KEY_ENV;
+  if (process.env.RUN_AGENT_MODE) c.permissionMode = process.env.RUN_AGENT_MODE;
   const maxTokens = Number(process.env.RUN_AGENT_MAX_TOKENS);
   if (Number.isFinite(maxTokens) && maxTokens > 0) c.maxTokens = Math.floor(maxTokens);
   return c;

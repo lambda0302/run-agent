@@ -68,6 +68,7 @@ export const grepTool: Tool = {
     "Recursively search a directory for lines matching a regular expression. " +
     "Returns file:line matches, skipping .git and node_modules. Optionally filter files by glob.",
   inputSchema: schema,
+  isConcurrencySafe: true,
   async call(input): Promise<ToolCallResult> {
     const { pattern, path: dir, glob, ignore } = schema.parse(input);
     const root = path.resolve(dir ?? ".");

@@ -73,6 +73,7 @@ export const bashTool: Tool = {
     "Run a shell command and return its output. Default 120s timeout, output truncated to 30k chars. " +
     "For long-running commands increase timeout; cwd defaults to the project root.",
   inputSchema: schema,
+  isConcurrencySafe: false,
   async call(input): Promise<ToolCallResult> {
     const { command, cwd, timeout, shell } = schema.parse(input);
     const spec = resolveShell(shell);

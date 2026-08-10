@@ -24,6 +24,7 @@ export const readTool: Tool = {
     "Read a text file, optionally a 1-based line range (offset/limit). Returns file content or a short error. " +
     "For large files read in chunks via offset/limit.",
   inputSchema: schema,
+  isConcurrencySafe: true,
   async call(input): Promise<ToolCallResult> {
     const { file_path, offset, limit } = schema.parse(input);
     const abs = path.resolve(file_path);

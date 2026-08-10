@@ -13,6 +13,7 @@ export const writeTool: Tool = {
   description:
     "Write full content to a file, creating parent directories as needed. Overwrites existing files.",
   inputSchema: schema,
+  isConcurrencySafe: false,
   async call(input): Promise<ToolCallResult> {
     const { file_path, content } = schema.parse(input);
     const abs = path.resolve(file_path);

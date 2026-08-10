@@ -16,6 +16,7 @@ export const editTool: Tool = {
     "Make a targeted edit by replacing an exact old_string with new_string in a file. " +
     "If old_string matches multiple times, fails unless replace_all=true. Use write_file for new/whole files.",
   inputSchema: schema,
+  isConcurrencySafe: false,
   async call(input): Promise<ToolCallResult> {
     const { file_path, old_string, new_string, replace_all } = schema.parse(input);
     const abs = path.resolve(file_path);

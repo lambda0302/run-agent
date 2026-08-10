@@ -49,7 +49,9 @@ afterEach(() => {
 
 describe("loadConfig 优先级", () => {
   it("无任何来源时回退默认 provider=anthropic", () => {
-    expect(loadConfig().provider).toBe("anthropic");
+    // 指向不存在的配置文件，避免读到真实用户配置（保持 hermetic）
+    const none = path.join(tmpdir(), "run-agent-no-config.json");
+    expect(loadConfig({}, { configPath: none }).provider).toBe("anthropic");
   });
 
   it("配置文件优先于默认值", () => {
@@ -110,12 +112,7 @@ describe("loadDotEnv", () => {
 
   it("读取 KEY=VALUE 行,忽略注释与空行,剥离引号", () => {
     const dir = makeEnvFile(
-      [
-        "# 这是注释",
-        "",
-        "MY_TEST_VAR=hello",
-        "MY_QUOTED_VAR=\"带引号的值\"",
-      ].join("\n"),
+      ["# 这是注释", "", "MY_TEST_VAR=hello", 'MY_QUOTED_VAR="带引号的值"'].join("\n"),
     );
     loadDotEnv(dir);
     expect(process.env.MY_TEST_VAR).toBe("hello");

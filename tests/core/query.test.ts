@@ -7,6 +7,7 @@ import type {
   StreamOptions,
 } from "../../src/providers/types.js";
 import { runQuery } from "../../src/core/query.js";
+import type { Decision } from "../../src/permissions/types.js";
 import type { Tool } from "../../src/tools.js";
 
 /** 脚本化的 fake LLM：每次 stream() 弹出下一组事件，并记录收到的消息与 tools。 */
@@ -159,5 +160,97 @@ describe("runQuery（mock LLM 的 golden 场景）", () => {
       maxIterations: 1,
     });
     expect(r.iterations).toBe(1);
+  });
+});
+
+/** 流式失败 N 次后恢复的 fake：用于验证 transient 错误重试。 */
+class FlakyClient implements LLMClient {
+  provider = "fake";
+  calls = 0;
+  constructor(
+    private failTimes: number,
+    private events: StreamEvent[],
+    private failError: { message: string; status?: number } = {
+      message: "socket hang up",
+      status: 503,
+    },
+  ) {}
+  async *stream(): AsyncIterable<StreamEvent> {
+    this.calls++;
+    if (this.calls <= this.failTimes) {
+      throw Object.assign(new Error(this.failError.message), { status: this.failError.status });
+    }
+    for (const ev of this.events) yield ev;
+  }
+}
+
+describe("runQuery 流式错误重试", () => {
+  it("transient 错误重试后成功（丢弃已收集增量、整轮重来）", async () => {
+    const flaky = new FlakyClient(1, [
+      { type: "text", text: "retried-ok" },
+      { type: "done", stopReason: "end_turn" },
+    ]);
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client: flaky,
+      tools: [echoTool],
+      maxRetries: 2,
+    });
+    expect(flaky.calls).toBe(2); // 第 1 次失败，第 2 次成功
+    expect(r.reply).toBe("retried-ok");
+  });
+
+  it("非 transient 错误（4xx）不重试，直接抛给上层", async () => {
+    const flaky = new FlakyClient(1, [{ type: "done", stopReason: "end_turn" }], {
+      message: "bad request",
+      status: 400,
+    });
+    await expect(
+      runQuery([{ role: "user", content: "go" }], {
+        client: flaky,
+        tools: [echoTool],
+        maxRetries: 2,
+      }),
+    ).rejects.toThrow("bad request");
+    expect(flaky.calls).toBe(1);
+  });
+
+  it("重试次数耗尽后抛错（不无限重试）", async () => {
+    const flaky = new FlakyClient(5, [{ type: "done", stopReason: "end_turn" }]);
+    await expect(
+      runQuery([{ role: "user", content: "go" }], {
+        client: flaky,
+        tools: [echoTool],
+        maxRetries: 1,
+      }),
+    ).rejects.toThrow();
+    expect(flaky.calls).toBe(2); // 1 次初始 + 1 次重试，共 2 次
+  });
+});
+
+describe("runQuery 权限集成", () => {
+  it("checkPermission 返回 deny → tool_result 回填拒绝原因", async () => {
+    const fake = new FakeClient([
+      [
+        { type: "tool_use", id: "t1", name: "echo", input: { text: "x" } },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text", text: "ok" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client: fake,
+      tools: [echoTool],
+      checkPermission: async () => "deny" as Decision,
+    });
+
+    const toolMsg = r.messages.find((m) => m.role === "tool");
+    expect(toolMsg).toEqual({
+      role: "tool",
+      tool_use_id: "t1",
+      content: "权限被拒绝: 未授权执行 echo",
+    });
+    expect(r.reply).toBe("ok");
   });
 });

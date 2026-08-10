@@ -2,6 +2,34 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.2.0] - 2026-08-11
+
+### Added
+
+- **权限审批引擎**（`src/permissions/`，V2 M1）：`default` / `acceptEdits` / `bypass` 三模式；
+  逐级短路判定（bypass → 内置底线 → 用户规则首条命中 → 模式兜底）；`run_bash` 命令按
+  危险/风险/安全分级。
+- **内置安全底线**：危险命令（`rm -rf /`、`mkfs`/`fdisk`、`dd` 写裸设备、`git push --force`、
+  `npm publish`、`shutdown` 等）与敏感路径（`.git` / `.claude` / `.run-agent` 段）无条件拒绝，
+  用户规则无法解除。
+- **用户规则**：全局 `~/.config/run-agent/permissions.json` + 项目级 `.run-agent/permissions.json`，
+  `tool`/`path`(glob)/`command`(正则)/`action` 维度，首条命中短路。
+- **Trust 信任边界**：`run-agent trust [path] [--list|--remove]`、`-t/--trust` 启动信任；
+  只有受信任项目的项目级规则才被加载（防提示注入）。
+- **只读并行 / 写串行**（V2 M2）：`isConcurrencySafe` 声明 + 信号量并发（上限 10），
+  结果重排回原顺序回填 `tool_result`；副作用工具绝不并行。
+- **流式错误重试**（V2 M3）：transient 错误（429/5xx/网络）指数退避重试，`maxRetries` 可配
+  （默认 2，`RUN_AGENT_MAX_RETRIES` 覆盖）；重试丢弃已收集增量整轮重来。
+- CLI 选项：`--mode` / `--dangerously-skip-permissions` / `--trust`，以及 `trust` 子命令。
+- 测试：权限决策矩阵、规则持久化、并发执行（并行/串行/上限/顺序）、错误重试、权限集成、
+  CLI 沙箱化冒烟——共 95 个用例。
+
+### Changed
+
+- 版本号 `0.1.0` → `0.2.0`。
+- 6 个工具标记并发安全属性；`config.json` 新增 `permissionMode`；`.env` 加载在启动时生效。
+- 文档：新增 `docs/permissions.md`、`SECURITY.md`；README 增加"安全模型"章节。
+
 ## [0.1.0] - 2026-08-10
 
 ### Added

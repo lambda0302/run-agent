@@ -1,5 +1,6 @@
 import * as readline from "node:readline";
 import { runQuery } from "../core/query.js";
+import type { Decision } from "../permissions/types.js";
 import type { LLMMessage, LLMClient } from "../providers/types.js";
 import type { Tool } from "../tools.js";
 import { appendMessage } from "../utils/sessionStorage.js";
@@ -12,6 +13,10 @@ export interface AgentOptions {
   /** 续接/初始上下文（--resume 时非空） */
   initialMessages?: LLMMessage[];
   out?: NodeJS.WritableStream;
+  /** V2 权限回调：返回 allow/deny（ask 已由上层 resolve） */
+  checkPermission?: (tool: Tool, input: unknown) => Promise<Decision>;
+  /** 流式 transient 错误重试次数 */
+  maxRetries?: number;
 }
 
 const DIM = "\x1b[90m";
@@ -53,6 +58,8 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<st
     client: opts.client,
     tools: opts.tools,
     ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+    ...(opts.checkPermission ? { checkPermission: opts.checkPermission } : {}),
+    ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
     ...createHandlers(out),
   });
   out.write("\n");
@@ -131,6 +138,8 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
       client: opts.client,
       tools: opts.tools,
       ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+      ...(opts.checkPermission ? { checkPermission: opts.checkPermission } : {}),
+      ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       ...handlers,
     });
     out.write("\n");

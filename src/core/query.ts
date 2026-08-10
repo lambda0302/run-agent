@@ -7,6 +7,8 @@ import type {
 } from "../providers/types.js";
 import { toToolSpecs } from "../tools.js";
 import type { Tool } from "../tools.js";
+import type { Decision } from "../permissions/types.js";
+import { executeToolCalls } from "./execute.js";
 
 export interface RunQueryOptions {
   client: LLMClient;
@@ -20,6 +22,10 @@ export interface RunQueryOptions {
   onToolCall?: (name: string, input: unknown) => void;
   /** 工具执行完成后回调 */
   onToolResult?: (name: string, result: string) => void;
+  /** V2 权限回调：返回 allow/deny（ask 已由上层 resolve）；缺省 = 不设权限限制 */
+  checkPermission?: (tool: Tool, input: unknown) => Promise<Decision>;
+  /** 流式请求的 transient 错误重试次数，默认 2（可用 RUN_AGENT_MAX_RETRIES 覆盖） */
+  maxRetries?: number;
 }
 
 export interface RunQueryResult {
@@ -31,11 +37,25 @@ export interface RunQueryResult {
 }
 
 const DEFAULT_MAX_ITERATIONS = 25;
+const DEFAULT_MAX_RETRIES = 2;
+
+function isTransientError(e: unknown): boolean {
+  if (!(e instanceof Error)) return true;
+  const status = (e as { status?: unknown }).status;
+  if (typeof status === "number") return status === 429 || status >= 500;
+  if (typeof status === "string") {
+    const n = Number(status);
+    if (Number.isFinite(n)) return n === 429 || n >= 500;
+  }
+  return /ECONNRESET|ECONNREFUSED|ETIMEDOUT|socket hang up|network/i.test(e.message);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * V1 极简 ReAct loop：
- * stream → 收集 text/tool_use → 按 stopReason 分流：
- *   end_turn 结束；tool_use 执行工具回填 tool_result 后继续；max_tokens/error 简单恢复。
+ * ReAct loop：stream → 收集 text/tool_use → 按 stopReason 分流：
+ *   end_turn 结束；tool_use 执行工具（只读并行/写串行 + 权限校验）回填后继续；
+ *   max_tokens 追加提示续跑；error/transient 错误重试或简单恢复。
  */
 export async function runQuery(
   initial: LLMMessage[],
@@ -43,29 +63,43 @@ export async function runQuery(
 ): Promise<RunQueryResult> {
   const messages: LLMMessage[] = [...initial];
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  const envRetries = Number(process.env.RUN_AGENT_MAX_RETRIES);
+  const maxRetries =
+    opts.maxRetries ??
+    (Number.isFinite(envRetries) && envRetries >= 0 ? Math.floor(envRetries) : DEFAULT_MAX_RETRIES);
   let iterations = 0;
   let reply = "";
 
   while (iterations < maxIterations) {
     iterations++;
 
-    const stream = opts.client.stream(messages, {
-      tools: toToolSpecs(opts.tools),
-      ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
-    });
-
-    const textParts: string[] = [];
-    const toolUses: ToolUseBlock[] = [];
+    // 流式请求：transient 错误（429/5xx/网络）指数退避重试；重试会丢弃已收集的增量重来一整轮
+    let textParts: string[] = [];
+    let toolUses: ToolUseBlock[] = [];
     let stopReason: StopReason = "end_turn";
-
-    for await (const ev of stream) {
-      if (ev.type === "text") {
-        textParts.push(ev.text);
-        opts.onText?.(ev.text);
-      } else if (ev.type === "tool_use") {
-        toolUses.push({ type: "tool_use", id: ev.id, name: ev.name, input: ev.input });
-      } else if (ev.type === "done") {
-        stopReason = ev.stopReason;
+    let attempt = 0;
+    for (;;) {
+      try {
+        for await (const ev of opts.client.stream(messages, {
+          tools: toToolSpecs(opts.tools),
+          ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+        })) {
+          if (ev.type === "text") {
+            textParts.push(ev.text);
+            opts.onText?.(ev.text);
+          } else if (ev.type === "tool_use") {
+            toolUses.push({ type: "tool_use", id: ev.id, name: ev.name, input: ev.input });
+          } else if (ev.type === "done") {
+            stopReason = ev.stopReason;
+          }
+        }
+        break;
+      } catch (e) {
+        if (attempt >= maxRetries || !isTransientError(e)) throw e;
+        attempt++;
+        textParts = [];
+        toolUses = [];
+        await sleep(500 * 2 ** attempt); // 1s, 2s, …
       }
     }
 
@@ -82,27 +116,14 @@ export async function runQuery(
     }
 
     if (stopReason === "tool_use") {
-      for (const tu of toolUses) {
-        const tool = opts.tools.find((t) => t.name === tu.name);
-        if (!tool) {
-          messages.push({ role: "tool", tool_use_id: tu.id, content: `未知工具: ${tu.name}` });
-          continue;
-        }
-        opts.onToolCall?.(tu.name, tu.input);
-        const parsed = tool.inputSchema.safeParse(tu.input);
-        let content: string;
-        if (!parsed.success) {
-          content = `参数校验失败: ${parsed.error.message}`;
-        } else {
-          try {
-            const r = await tool.call(parsed.data);
-            content = r.result;
-            opts.onToolResult?.(tu.name, r.result);
-          } catch (e) {
-            content = `工具执行错误: ${e instanceof Error ? e.message : String(e)}`;
-          }
-        }
-        messages.push({ role: "tool", tool_use_id: tu.id, content });
+      const results = await executeToolCalls(toolUses, {
+        tools: opts.tools,
+        ...(opts.checkPermission ? { checkPermission: opts.checkPermission } : {}),
+        ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
+        ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
+      });
+      for (let i = 0; i < toolUses.length; i++) {
+        messages.push({ role: "tool", tool_use_id: toolUses[i]!.id, content: results[i]! });
       }
       continue;
     }

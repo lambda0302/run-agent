@@ -31,9 +31,9 @@ type PermissionMode = "default" | "acceptEdits" | "bypass";
 type Decision = "allow" | "ask" | "deny";
 
 type PermissionRule = {
-  tool?: string;      // 工具名精确匹配，如 "run_bash" / "edit_file" / "*"
-  path?: string;      // glob，作用于 file_path / cwd（路径先 path.normalize）
-  command?: string;   // 正则，作用于 run_bash 的 command 字段
+  tool?: string; // 工具名精确匹配，如 "run_bash" / "edit_file" / "*"
+  path?: string; // glob，作用于 file_path / cwd（路径先 path.normalize）
+  command?: string; // 正则，作用于 run_bash 的 command 字段
   action: Decision;
 };
 ```
@@ -59,9 +59,9 @@ type PermissionRule = {
 ```ts
 function partitionToolCalls(calls: ToolUseBlock[]): {
   concurrent: ToolUseBlock[]; // isConcurrencySafe === true → 可并行
-  serial: ToolUseBlock[];     // 其余 → 按序执行
-}
-async function executeTools(calls, tools, hooks): Promise<string[]> // 返回按原始顺序的 result[]
+  serial: ToolUseBlock[]; // 其余 → 按序执行
+};
+async function executeTools(calls, tools, hooks): Promise<string[]>; // 返回按原始顺序的 result[]
 ```
 
 - **标注**：`read_file` / `glob` / `grep` → `isConcurrencySafe: true`（显式）；`write_file` / `edit_file` / `run_bash` → `isConcurrencySafe: false`。注意 V1 接口注释说默认 true，**写类工具必须显式标 false**，这是并发安全的关键。
@@ -129,13 +129,13 @@ package.json                # version 0.2.0
 
 ## 5. DoD 验收清单
 
-- [ ] 危险命令被拦截、未授权不改文件（engine 判定矩阵测试绿）
-- [ ] 一次多文件编辑时只读并行、写串行，结果顺序一致（execute 测试绿）
-- [ ] 无 TTY 的 `ask` 自动 deny，不挂起
-- [ ] Trust 对话 + `trust` 子命令可用；不信任项目不加载其配置
-- [ ] 流式 transient 错误指数退避重试生效（`maxRetries`）
-- [ ] `SECURITY.md` + README「安全模型」章节 + `docs/permissions.md`
-- [ ] CHANGELOG 记 `0.2.0`；package.json 版本 `0.2.0`；CI 三 OS 绿；tag `v0.2.0`
+- [x] 危险命令被拦截、未授权不改文件（engine 判定矩阵测试绿）
+- [x] 一次多文件编辑时只读并行、写串行，结果顺序一致（execute 测试绿）
+- [x] 无 TTY 的 `ask` 自动 deny，不挂起
+- [x] Trust 对话 + `trust` 子命令可用；不信任项目不加载其配置
+- [x] 流式 transient 错误指数退避重试生效（`maxRetries`）
+- [x] `SECURITY.md` + README「安全模型」章节 + `docs/permissions.md`
+- [x] CHANGELOG 记 `0.2.0`；package.json 版本 `0.2.0`；CI 三 OS 绿；tag `v0.2.0`
 - [ ] 真实模型本地验证一次「权限拦截 + 并发编辑」（需 key，手动）
 
 ---
