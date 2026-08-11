@@ -3,8 +3,7 @@ import path from "node:path";
 import pkg from "../../package.json" with { type: "json" };
 import { loadConfig, resolveApiKey } from "../config/index.js";
 import { loadDotEnv } from "../config/load.js";
-import { hasPermissionsToUseTool, inputPath } from "../permissions/engine.js";
-import { askTrustProject, resolveAsk } from "../permissions/prompt.js";
+import { askTrustProject } from "../permissions/prompt.js";
 import {
   addTrustedProject,
   isProjectTrusted,
@@ -12,11 +11,10 @@ import {
   loadTrustedProjects,
   removeTrustedProject,
 } from "../permissions/store.js";
-import type { Decision, PermissionContext, PermissionMode } from "../permissions/types.js";
+import type { PermissionContext, PermissionMode } from "../permissions/types.js";
 import { createClient } from "../providers/index.js";
 import type { LLMMessage, ProviderName } from "../providers/types.js";
 import { TOOLS } from "../tools.js";
-import type { Tool } from "../tools.js";
 import { RunAgentError } from "../utils/errors.js";
 import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
@@ -140,16 +138,6 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
   }
 
   const ctx: PermissionContext = { mode, rules, canPrompt, isTrusted };
-  const checkPermission = async (tool: Tool, input: unknown): Promise<Decision> => {
-    const d = hasPermissionsToUseTool(tool.name, input, mode, rules);
-    if (d !== "ask") return d;
-    const resolved = await resolveAsk(tool, input, ctx);
-    if (resolved === "deny") {
-      const target = inputPath(input);
-      process.stderr.write(`✗ 已拒绝执行 ${tool.name}${target ? ` ${target}` : ""}（未获授权）\n`);
-    }
-    return resolved;
-  };
 
   // ── 会话：--resume 读最新会话，否则新建 ─────────────────────────
   let sessionFile: string;
@@ -171,7 +159,7 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ...(cfg.maxTokens ? { maxTokens: cfg.maxTokens } : {}),
     sessionFile,
     initialMessages,
-    checkPermission,
+    ctx,
   };
 
   if (prompt) {

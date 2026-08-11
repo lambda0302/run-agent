@@ -2,6 +2,20 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### Fixed
+
+- **权限确认多 y 回显 bug**（V2-11）：`resolveAsk` 不再在同一 stdin 上自建 readline，改为
+  **复用 REPL 的唯一 readline**（注入 `ask` 函数）——输入一个 `y` 不再回显成 `yy`/`yyy`，
+  且 `yy`/`yyy` 纯 y 串也判为允许。`checkPermission` 的构造移入 `repl.ts` 的
+  `makeCheckPermission(ctx, out, ask)`。新增 `tests/permissions/prompt.test.ts` 回归锁定。
+
+### Added
+
+- **REPL 任务完成分隔线**：每轮任务结束输出清晰的 `✔ 任务完成` 标记，明确一轮已结束，
+  消除「任务完成后输入 `y` 被当成新 prompt 又跑一遍」的困惑（后者本身是 REPL 语义）。
+
 ## [0.2.0] - 2026-08-11
 
 ### Added
