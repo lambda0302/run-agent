@@ -298,11 +298,12 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **写入记忆**（0.3.2）：`remember` 工具把「用户明确要求记住 / 跨会话值得保留」的结论写进用户级 `~/.config/run-agent/CLAUDE.md`，自动去重，走权限引擎
 - **主动记忆**（0.4.0，V4）：项目级 `.run-agent/memory/`，每条记忆独立文件（frontmatter `type` + 正文），`MEMORY.md` 索引常驻 system；`remember` 默认写项目级（按 `name` 去重更新），`scope="user"` 仅用户明确要求时写；Trust 会话内只读豁免记忆目录
 - **记忆维护**（0.4.0）：`run-agent memory list/show/rm/prune` 子命令管理项目记忆；`glob`/`grep` 遍历默认忽略 `.run-agent`
+- **代码理解**（0.4.1）：`repo_map` 两遍排序定位符号/文件（git 索引 + 路径打分 + 符号扫描，非 git 仓库降级 readdir）· `explore` 只读探索子 agent（4/8/12 轮，上下文独立）· `verify` 对改动文件跑 tsc/eslint/test 把错误读回自修（命令白名单 + 120s 超时 + 30k 截断）
 - **超大工具结果指针化**（V3）：超阈值结果落盘、消息里只留指针，模型需要时自己 `read_file`
 - **权限审批引擎**（V2）：`default` / `acceptEdits` / `bypass` 三模式，内置危险命令与敏感路径底线，支持全局 + 项目级规则
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json`，防提示注入
 - **只读并行 / 写串行**（V2）：并发读取加速，副作用工具保持串行，结果按原顺序回填
-- **7 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）
+- **10 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `verify`（跑 tsc/eslint/test 自修）
 - **多提供商**：一套抽象对接 Anthropic / OpenAI / OpenAI 兼容 / Ollama
 - **透明**：REPL 里实时看到模型文本增量与每次工具调用及结果
 - **会话持久化**：JSONL 追加、`--resume` 原样回放（支持压缩边界续接）

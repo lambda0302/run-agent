@@ -16,8 +16,8 @@ const DENY_DIR_SEGMENTS = new Set([".git", ".claude", ".run-agent"]);
  */
 const AGENT_DIR_BASH_RE = /(?<=^|[\s\\/'"`=(;|&])\.run-agent(?![\w-])/;
 
-/** 只读工具：default 模式下免确认。 */
-const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep"]);
+/** 只读工具：default 模式下免确认。repo_map 为 0.4.1 只读定位工具（决策 D）。 */
+const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep", "repo_map"]);
 
 /**
  * 记忆目录读豁免（V4 决策 A）：Trust 会话内，三个只读工具对 `.run-agent/memory/**` 放行——

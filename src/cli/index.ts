@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pkg from "../../package.json" with { type: "json" };
 import { loadConfig, resolveApiKey, resolveContextWindow } from "../config/index.js";
+import { buildSystemPrompt } from "../core/context.js";
 import type { SystemContext } from "../core/context.js";
 import { loadDotEnv } from "../config/load.js";
 import { askTrustProject } from "../permissions/prompt.js";
@@ -13,11 +14,13 @@ import {
   loadTrustedProjects,
   removeTrustedProject,
 } from "../permissions/store.js";
-import type { PermissionContext, PermissionMode } from "../permissions/types.js";
+import { hasPermissionsToUseTool } from "../permissions/engine.js";
+import type { Decision, PermissionContext, PermissionMode } from "../permissions/types.js";
 import { createClient } from "../providers/index.js";
 import type { LLMMessage, ProviderName } from "../providers/types.js";
 import { listMemories, pruneMemories, removeMemory, topicFilePath } from "../core/memory.js";
 import { buildTools } from "../tools.js";
+import type { Tool } from "../tools.js";
 import { RunAgentError } from "../utils/errors.js";
 import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
@@ -205,6 +208,15 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
   const systemCtx: SystemContext = { cwd, isTrusted, bare: Boolean(opts.bare) };
   const contextWindow = resolveContextWindow(cfg);
 
+  // ── 0.4.1 explore 子 agent：复用主 system 快照 + 继承父级权限 ────────
+  // 子查询只读工具 default 免确认；即便出现 ask（如用户规则）也降级 deny，
+  // 绝不另建 readline（stdin 只能有一个读者）。--bare 时 buildSystemPrompt 返回 undefined。
+  const system = await buildSystemPrompt(systemCtx);
+  const exploreCheckPermission = async (tool: Tool, input: unknown): Promise<Decision> => {
+    const d = hasPermissionsToUseTool(tool.name, input, ctx.mode, ctx.rules, ctx.isTrusted);
+    return d === "ask" ? "deny" : d;
+  };
+
   // ── 会话：--resume 读最新会话，否则新建 ─────────────────────────
   let sessionFile: string;
   let initialMessages: LLMMessage[] = [];
@@ -221,7 +233,14 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
 
   const agentOpts = {
     client,
-    tools: buildTools({ cwd, isTrusted }),
+    tools: buildTools({
+      cwd,
+      isTrusted,
+      client,
+      ...(system !== undefined ? { system } : {}),
+      ...(contextWindow ? { contextWindow } : {}),
+      checkPermission: exploreCheckPermission,
+    }),
     ...(cfg.maxTokens ? { maxTokens: cfg.maxTokens } : {}),
     sessionFile,
     initialMessages,

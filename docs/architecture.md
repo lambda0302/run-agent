@@ -28,11 +28,11 @@ run-agent/
 │   │   ├── openai.ts           # OpenAI + OpenAI 兼容共享实现（function calling 互转）
 │   │   └── ollama.ts           # Ollama（OpenAI SDK 指向本地 /v1）
 │   ├── tools.ts                # Tool 接口 + 注册表 + zod→JSONSchema 转换
-│   ├── tools/                  # 7 个内置工具（read/write/edit/glob/grep/bash/remember）
+│   ├── tools/                  # 10 个内置工具（read/write/edit/glob/grep/bash/remember/repo_map/explore/verify）
 │   └── utils/
 │       ├── errors.ts           # RunAgentError
 │       └── sessionStorage.ts   # JSONL 会话持久化（含压缩边界重置点）
-├── tests/                      # vitest（166 用例）
+├── tests/                      # vitest（215 用例）
 └── dist/                       # tsup 打包产物（git 忽略）
 ```
 
@@ -70,7 +70,7 @@ cli (入口：参数 → 配置 → 会话文件 → systemCtx/contextWindow)
 | ------------------------ | ------------------------------------------------------------------------ |
 | `src/core/query.ts`      | catch 分支接 0.3.1 反应式压缩（prompt_too_long → 强制 compact）          |
 | `src/core/compact.ts`    | 0.3.1 硬截断 `hardTruncateToFit` / 孤儿 tool 修复 `normalizeToolPairing` |
-| `src/core/context.ts`    | managed 级记忆内容由后续版本填充；repo map / 语义索引 → V4               |
+| `src/core/context.ts`    | managed 级记忆内容由后续版本填充；语义索引 → V5（repo_map 已随 0.4.1 落地）|
 | `src/tools.ts`（`Tool`） | 新工具实现同一接口即可接入，写类工具显式 `isConcurrencySafe: false`      |
 | `src/providers/`         | 新适配器遵循同一 `LLMClient` 接口即可接入                                |
 | `src/cli/repl.ts`        | session 切换 UI、Hooks、MCP、TUI 从后续版本逐步加入                      |

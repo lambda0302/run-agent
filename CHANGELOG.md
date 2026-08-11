@@ -2,6 +2,31 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.1] - 2026-08-11
+
+### Added
+
+- **`repo_map` 定位工具**（决策 8.1）：两遍排序定位候选文件——第一遍 `git ls-files`
+  （按 cwd+HEAD sha 缓存 60s）→ 段/扩展名过滤 → 按 文件名>路径段>其他 打分取 top-30；
+  第二遍只对 top-N 做符号正则扫描（ts/js/py/go 顶层声明行），按 maxBytes 预算返回
+  「候选文件 + 符号行」。`.git`/`.run-agent`/`node_modules`/`dist`/`coverage` 与二进制扩展名
+  永不进候选；非 git 仓库退化为 readdir（上限 5000 文件），git 缺失/超时返回提示。
+  只读、并发安全。
+- **`explore` 只读探索子 agent**（决策 8.2）：嵌套 `runQuery`，只给 repo_map/glob/grep/read_file
+  四件只读工具；thoroughness → 4/8/12 轮；上下文独立（超长自动压缩，不污染主会话）；复用主
+  system（含记忆索引）；结论回填 tool_result。权限继承父级，ask 降级 deny 不另建 readline；
+  子查询错误转为 tool_result 文本，不抛出。
+- **`verify` 检查工具**（决策 8.3）：对改动文件跑项目脚本、把错误读回给模型自修。toolchain
+  识别优先级 eslint 配置 > tsconfig.json（npx tsc --noEmit）> scripts.test（npm test）；
+  命令模板白名单（只许 tsc/eslint/test 派生命令，拒绝任意命令）；120s 超时 + 30k 截断。
+- 测试：repo_map（符号/文件名/路径段排序、黑名单排除、maxBytes 截断、readdir 降级）、
+  explore（只读工具集、system 透传、轮数映射、超长触发压缩、异常兜底）、verify（toolchain
+  矩阵、命令白名单、超时文本透传、30k 截断）——共 215 个用例。
+
+### Changed
+
+- 版本号 `0.4.0` → `0.4.1`；内置工具 7 个 → 10 个（新增 repo_map / explore / verify）。
+
 ## [0.4.0] - 2026-08-11
 
 ### Added

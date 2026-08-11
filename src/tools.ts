@@ -1,5 +1,6 @@
 import { z } from "zod";
-import type { ToolSpec } from "./providers/types.js";
+import type { Decision } from "./permissions/types.js";
+import type { LLMClient, ToolSpec } from "./providers/types.js";
 import { readTool } from "./tools/read.js";
 import { writeTool } from "./tools/write.js";
 import { editTool } from "./tools/edit.js";
@@ -7,6 +8,9 @@ import { globTool } from "./tools/glob.js";
 import { grepTool } from "./tools/grep.js";
 import { bashTool } from "./tools/bash/index.js";
 import { makeRememberTool } from "./tools/remember.js";
+import { makeExploreTool } from "./tools/explore.js";
+import { repoMapTool } from "./tools/repo_map.js";
+import { verifyTool } from "./tools/verify.js";
 
 /** 一次工具调用的返回：result 会回填进对话；artifacts 是落盘副产物路径（如被截断的完整输出）。 */
 export interface ToolCallResult {
@@ -98,12 +102,45 @@ export function toToolSpecs(tools: Tool[]): ToolSpec[] {
   }));
 }
 
-/** V1 内置工具注册表（静态部分；remember 需 cwd/isTrusted，由 buildTools 装配）。 */
-export const TOOLS: Tool[] = [readTool, writeTool, editTool, globTool, grepTool, bashTool];
+/** V1 内置工具注册表（静态部分；remember/explore 需运行时依赖，由 buildTools 装配）。 */
+export const TOOLS: Tool[] = [
+  readTool,
+  writeTool,
+  editTool,
+  globTool,
+  grepTool,
+  bashTool,
+  repoMapTool,
+  verifyTool,
+];
 
-/** 运行时装配完整工具集：静态工具 + remember 工厂实例（注入 cwd/isTrusted，scope 门控用）。 */
-export function buildTools(opts: { cwd: string; isTrusted: boolean; homeDir?: string }): Tool[] {
-  return [...TOOLS, makeRememberTool(opts)];
+export interface BuildToolsOptions {
+  cwd: string;
+  isTrusted: boolean;
+  homeDir?: string;
+  /** explore 工厂依赖：注入 client 才装配 explore（0.4.1；V7 泛化为 Agent 工具）。 */
+  client?: LLMClient;
+  /** 子 agent 复用的主 system（含 MEMORY.md 索引）；CLI 装配时快照。 */
+  system?: string;
+  contextWindow?: number;
+  /** 权限继承父级（子查询只读工具 default 免确认，用户 deny 规则仍生效）。 */
+  checkPermission?: (tool: Tool, input: unknown) => Promise<Decision>;
+}
+
+/** 运行时装配完整工具集：静态工具 + remember/explore 工厂实例（注入运行时依赖）。 */
+export function buildTools(opts: BuildToolsOptions): Tool[] {
+  const tools: Tool[] = [...TOOLS, makeRememberTool(opts)];
+  if (opts.client) {
+    tools.push(
+      makeExploreTool({
+        client: opts.client,
+        ...(opts.system !== undefined ? { system: opts.system } : {}),
+        ...(opts.contextWindow !== undefined ? { contextWindow: opts.contextWindow } : {}),
+        ...(opts.checkPermission !== undefined ? { checkPermission: opts.checkPermission } : {}),
+      }),
+    );
+  }
+  return tools;
 }
 
 export function getTool(name: string): Tool | undefined {
