@@ -90,7 +90,7 @@ export class StreamingToolExecutor {
     if (this.opts.checkPermission) {
       const d = await this.opts.checkPermission(tool, tu.input);
       if (d === "deny") {
-        this.settle(item, `权限被拒绝: 未授权执行 ${tu.name}`);
+        this.settle(item, tool.denyMessage ?? `权限被拒绝: 未授权执行 ${tu.name}`);
         return;
       }
     }

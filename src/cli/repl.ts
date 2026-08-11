@@ -66,13 +66,40 @@ function preview(result: string): string {
   return first.length > 120 ? first.slice(0, 120) + "…" : first;
 }
 
-function createHandlers(out: NodeJS.WritableStream) {
+/**
+ * 输出缓冲门（0.5.1 显示修复）：权限弹窗期间缓冲 agent 输出，结束后按序刷出。
+ * 流式并行下，弹窗前已入队的后台只读工具会在 rl.question 等待期间完成并打印结果，
+ * 结果直接落在 y/n 提示行上——看起来像"卡住"或"输入被吞"。
+ * 弹窗时流式循环阻塞在 await addTool → checkPermission → ask，缓冲量极小、成本可忽略。
+ */
+export function createOutputGate(out: NodeJS.WritableStream) {
+  let buffer: string[] | null = null;
   return {
-    onText: (t: string) => out.write(t),
+    emit: (s: string) => {
+      if (buffer) buffer.push(s);
+      else out.write(s);
+    },
+    /** 弹窗前调用：后续输出先入缓冲。 */
+    begin: () => {
+      buffer = [];
+    },
+    /** 弹窗结束后调用：按序刷出缓冲，恢复直写。 */
+    end: () => {
+      const buffered = buffer;
+      buffer = null;
+      if (buffered) for (const s of buffered) out.write(s);
+    },
+  };
+}
+
+/** 装配 agent 输出回调：全部经 emit（= 直写，或经输出门缓冲）。 */
+export function createHandlers(emit: (s: string) => void) {
+  return {
+    onText: (t: string) => emit(t),
     onToolCall: (name: string, input: unknown) =>
-      out.write(`\n${CYAN}⚡ ${name}${RESET} ${formatInput(input)}\n`),
+      emit(`\n${CYAN}⚡ ${name}${RESET} ${formatInput(input)}\n`),
     onToolResult: (name: string, result: string) =>
-      out.write(`${DIM}└ ${name}: ${preview(result)}${RESET}\n`),
+      emit(`${DIM}└ ${name}: ${preview(result)}${RESET}\n`),
   };
 }
 
@@ -141,7 +168,7 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<st
   const result = await runQuery(messages, {
     ...queryOpts(opts, system),
     ...(checkPermission ? { checkPermission } : {}),
-    ...createHandlers(out),
+    ...createHandlers((s: string) => out.write(s)),
   });
   out.write("\n");
 
@@ -168,10 +195,20 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
     output: out,
     terminal,
   });
-  const handlers = createHandlers(out);
+  const gate = createOutputGate(out);
+  const handlers = createHandlers(gate.emit);
 
   // 权限确认复用本 REPL 的同一 readline（在 stdin 上再建 interface 是双回显 bug 的根因）
-  const ask = (q: string) => new Promise<string>((resolve) => rl.question(q, resolve));
+  // 弹窗开始前打开输出门：后台并行工具的结果先缓冲，答完刷出，不污染 y/n 提示行（0.5.1 显示修复）
+  const ask = (q: string) => {
+    gate.begin();
+    return new Promise<string>((resolve) =>
+      rl.question(q, (answer) => {
+        gate.end();
+        resolve(answer);
+      }),
+    );
+  };
   const checkPermission = opts.ctx
     ? makeCheckPermission(opts.ctx, out, ask, opts.readOnlyNames)
     : undefined;

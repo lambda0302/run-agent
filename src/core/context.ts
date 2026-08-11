@@ -216,7 +216,7 @@ function formatDynamic(ctx: SystemContext, git: GitContext, date: string): strin
   const bits: string[] = [`当前时间: ${date}`, `工作目录: ${ctx.cwd}`];
   if (ctx.hasPlanMode) {
     bits.push(
-      "plan 模式：复杂/多文件/设计型任务先调用 enter_plan_mode 只读探索，再用 exit_plan_mode 呈现计划，批准后自动恢复执行",
+      "plan 模式：复杂/多文件/设计型任务先调用 enter_plan_mode 只读探索，再用 exit_plan_mode 呈现计划，批准后自动恢复执行。若用户拒绝了 exit_plan_mode 的计划，立即停止当前工作并等待用户下一条指令——不要输出实现内容，也不要重复尝试执行任务",
     );
   }
   if (ctx.mcpServers) {

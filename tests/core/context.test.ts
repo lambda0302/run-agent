@@ -125,6 +125,9 @@ describe("buildSystemPrompt（稳定/动态边界）", () => {
     );
     expect(sys).toContain("enter_plan_mode");
     expect(sys).toContain("exit_plan_mode");
+    // 拒绝语义：计划被拒后停止等待，不 dump 实现内容（0.5.1 改进）
+    expect(sys).toContain("拒绝");
+    expect(sys).toContain("等待用户下一条指令");
     const noPlan = await buildSystemPrompt(
       { cwd, isTrusted: false, bare: false },
       { homeDir: home, date: "d", git: {} },

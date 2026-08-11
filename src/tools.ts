@@ -28,6 +28,9 @@ export interface Tool {
   call(input: unknown): Promise<ToolCallResult>;
   /** V2 预留：是否可与其他工具并发执行。默认 true。 */
   isConcurrencySafe?: boolean;
+  /** 权限拒绝时的回填消息（缺省「权限被拒绝: 未授权执行 <name>」）。用于把拒绝的
+   *  用户语义传达给模型（如「用户拒绝了计划，停止等待指令」），避免模型误读为自身状态错误。 */
+  denyMessage?: string;
 }
 
 /**

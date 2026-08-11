@@ -201,6 +201,17 @@ describe("StreamingToolExecutor 流式即时执行", () => {
     expect(await exec.getResults()).toEqual(["权限被拒绝: 未授权执行 read"]);
   });
 
+  it("工具定义 denyMessage 时覆盖通用拒绝消息（0.5.1 计划拒绝语义）", async () => {
+    const read = makeTool("read", 0, true);
+    read.tool.denyMessage = "用户拒绝了你的计划。立即停止当前工作，等待用户下一条指令。";
+    const exec = new StreamingToolExecutor({
+      tools: [read.tool],
+      checkPermission: async () => "deny",
+    });
+    await exec.addTool(tu("read", "a", { id: 1 }), 0);
+    expect(await exec.getResults()).toEqual([read.tool.denyMessage]);
+  });
+
   it("工具池为函数时每次 addTool 重新解析（动态 MCP 场景）", async () => {
     const read = makeTool("read", 0, true);
     let resolved = 0;

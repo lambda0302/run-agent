@@ -82,6 +82,9 @@ export function makePlanTools(deps: PlanModeOptions): PlanTools {
       "mode is restored.",
     inputSchema: exitSchema,
     isConcurrencySafe: false,
+    denyMessage:
+      "用户拒绝了你的计划。立即停止当前工作，不要再次调用 enter_plan_mode 或 exit_plan_mode，" +
+      "等待用户下一条指令；若用户有修改意见，按其指示调整后再重新呈现计划。",
     async call(input): Promise<ToolCallResult> {
       if (deps.getMode() !== "plan") {
         return {

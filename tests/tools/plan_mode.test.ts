@@ -79,6 +79,15 @@ describe("makePlanTools（V5 决策 A2/A3）", () => {
     expect(r.result).toContain("不在 plan");
   });
 
+  it("exit_plan_mode 装配 denyMessage：用户拒绝计划时回填「停止等待」语义（0.5.1）", async () => {
+    const box = modeBox("default");
+    const pt = makePlanTools({ getMode: box.get, setMode: box.set, canPrompt: true });
+    const [, exit] = pt.tools as [Tool, Tool];
+    expect(exit.denyMessage).toContain("用户拒绝了你的计划");
+    expect(exit.denyMessage).toContain("等待用户下一条指令");
+    expect(exit.denyMessage).toContain("不要再次调用 enter_plan_mode 或 exit_plan_mode");
+  });
+
   it("exit_plan_mode：plan 下写 plan 文件 + 恢复 prePlanMode + 回填计划全文", async () => {
     const plansDir = path.join(tempDir(), ".run-agent", "plans");
     const box = modeBox("acceptEdits");
