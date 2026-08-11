@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import pkg from "../package.json";
 
 // 本文件测试打包产物（dist/cli.js），因此 test 脚本里必须先 build。
 const run = promisify(execFile);
@@ -24,9 +25,9 @@ afterEach(() => {
 });
 
 describe("CLI 冒烟（先 npm run build）", () => {
-  it("--version 输出 0.3.2 且退出 0", async () => {
+  it("--version 输出 package.json 版本且退出 0", async () => {
     const { stdout } = await run(process.execPath, [distCli, "--version"]);
-    expect(stdout.trim()).toBe("0.3.2");
+    expect(stdout.trim()).toBe(pkg.version);
   });
 
   it("--help 退出 0 且包含 provider 与 --resume", async () => {
