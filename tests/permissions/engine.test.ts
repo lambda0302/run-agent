@@ -255,3 +255,67 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     expect(hasPermissionsToUseTool("remember", input, "default", deny)).toBe("deny");
   });
 });
+
+describe("isMemoryReadExempt（V4 决策 A：.run-agent/memory/** 只读豁免）", () => {
+  const memFile = path.join("proj", ".run-agent", "memory", "a.md");
+
+  it("Trust 会话内 read_file/glob/grep 对记忆目录放行", () => {
+    expect(
+      hasPermissionsToUseTool("read_file", { file_path: memFile }, "default", RULES, true),
+    ).toBe("allow");
+    expect(hasPermissionsToUseTool("glob", { path: memFile }, "default", RULES, true)).toBe(
+      "allow",
+    );
+    expect(hasPermissionsToUseTool("grep", { path: memFile }, "default", RULES, true)).toBe(
+      "allow",
+    );
+  });
+
+  it("未 Trust → 豁免不生效；缺省 isTrusted=false 同样无豁免", () => {
+    expect(
+      hasPermissionsToUseTool("read_file", { file_path: memFile }, "default", RULES, false),
+    ).toBe("deny");
+    expect(hasPermissionsToUseTool("read_file", { file_path: memFile }, "default", RULES)).toBe(
+      "deny",
+    );
+  });
+
+  it("写/改工具对记忆目录仍 deny（写只能走 remember）", () => {
+    expect(
+      hasPermissionsToUseTool("write_file", { file_path: memFile }, "default", RULES, true),
+    ).toBe("deny");
+    expect(
+      hasPermissionsToUseTool("edit_file", { file_path: memFile }, "default", RULES, true),
+    ).toBe("deny");
+  });
+
+  it("非 memory 的 .run-agent 路径（CLAUDE.md/permissions.json）读仍 deny", () => {
+    const claude = path.join("proj", ".run-agent", "CLAUDE.md");
+    const perm = path.join("proj", ".run-agent", "permissions.json");
+    expect(
+      hasPermissionsToUseTool("read_file", { file_path: claude }, "default", RULES, true),
+    ).toBe("deny");
+    expect(hasPermissionsToUseTool("read_file", { file_path: perm }, "default", RULES, true)).toBe(
+      "deny",
+    );
+  });
+
+  it("run_bash 命令引用 .run-agent 仍拦（即使 Trust，读记忆用工具不走 shell）", () => {
+    expect(
+      hasPermissionsToUseTool(
+        "run_bash",
+        { command: "cat .run-agent/memory/a.md" },
+        "default",
+        RULES,
+        true,
+      ),
+    ).toBe("deny");
+  });
+
+  it("相似目录名 memory-backup 不放行", () => {
+    const backup = path.join("proj", ".run-agent", "memory-backup", "a.md");
+    expect(
+      hasPermissionsToUseTool("read_file", { file_path: backup }, "default", RULES, true),
+    ).toBe("deny");
+  });
+});

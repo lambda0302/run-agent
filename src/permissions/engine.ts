@@ -19,6 +19,22 @@ const AGENT_DIR_BASH_RE = /(?<=^|[\s\\/'"`=(;|&])\.run-agent(?![\w-])/;
 /** 只读工具：default 模式下免确认。 */
 const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep"]);
 
+/**
+ * 记忆目录读豁免（V4 决策 A）：Trust 会话内，三个只读工具对 `.run-agent/memory/**` 放行——
+ * 这是「索引 → 按需 read/grep 读记忆」的前提。判定在 deniedByDefault 内置 deny 之前。
+ * 其余 `.run-agent` 路径与 write_file/edit_file/run_bash 照旧 deny；未 Trust 会话豁免不生效。
+ * 独立纯函数（签名 tool,path,isTrusted），V4.5 并入专属通道时纯移动不重写（见 Plan_V4.md 决策 A 实施指引）。
+ */
+export function isMemoryReadExempt(tool: string, target: string, isTrusted: boolean): boolean {
+  if (!isTrusted) return false;
+  if (!READ_ONLY_TOOLS.has(tool)) return false;
+  const segments = path.resolve(target).split(/[\\/]/);
+  for (let i = 0; i < segments.length - 1; i++) {
+    if (segments[i] === ".run-agent" && segments[i + 1] === "memory") return true;
+  }
+  return false;
+}
+
 export type BashDanger = "safe" | "risky" | "dangerous";
 
 /** 危险命令：命中即内置 deny（覆盖 `rm -rf` 根目录、格式化、强推、发布包、关机重启等）。 */
@@ -132,15 +148,22 @@ function deniedByDefault(tool: string, input: unknown): boolean {
 
 /**
  * 判定一次工具调用是否允许。纯函数：ask 的处理（确认/降级）在 prompt 层，不在此。
+ * @param isTrusted 记忆读豁免的 Trust 门控；缺省 false（未传 = 无豁免，保持既有行为）。
  */
 export function hasPermissionsToUseTool(
   tool: string,
   input: unknown,
   mode: PermissionMode,
   rules: PermissionRule[],
+  isTrusted = false,
 ): Decision {
   if (mode === "bypass") return "allow";
-  if (deniedByDefault(tool, input)) return "deny";
+  const p = inputPath(input);
+  if (p && isMemoryReadExempt(tool, p, isTrusted)) {
+    // 记忆读豁免命中：跳过内置 deny，继续走用户规则与模式兜底
+  } else if (deniedByDefault(tool, input)) {
+    return "deny";
+  }
 
   for (const rule of rules) {
     if (ruleMatches(rule, tool, input)) return rule.action;

@@ -4,8 +4,8 @@ import { z } from "zod";
 import type { Tool, ToolCallResult } from "../tools.js";
 
 const MAX_RESULTS = 1000;
-/** 默认忽略的目录（避免把依赖/版本库扫进结果） */
-const ALWAYS_IGNORE = new Set([".git", "node_modules"]);
+/** 默认忽略的目录（避免把依赖/版本库/agent 自身目录扫进结果；.run-agent 为 V4.5 决策 F 前拉） */
+const ALWAYS_IGNORE = new Set([".git", "node_modules", ".run-agent"]);
 
 const schema = z.object({
   pattern: z.string().min(1).describe("Glob pattern, e.g. '**/*.ts', 'src/**/index.ts'"),
@@ -96,7 +96,8 @@ export const globTool: Tool = {
   name: "glob",
   description:
     "Find files by glob pattern, e.g. '**/*.ts' or 'src/**/*.{ts,tsx}'. " +
-    "Skips .git and node_modules by default. Returns up to 1000 matches.",
+    "Skips .git, node_modules, and .run-agent by default (pass an explicit path to search inside them). " +
+    "Returns up to 1000 matches.",
   inputSchema: schema,
   isConcurrencySafe: true,
   async call(input): Promise<ToolCallResult> {

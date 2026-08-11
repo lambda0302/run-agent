@@ -1,25 +1,40 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeRememberTool } from "../../src/tools/remember.js";
+import { memoryDirPath } from "../../src/core/memory.js";
 
 let dirs: string[] = [];
 
-function makeHome(): string {
-  const dir = mkdtempSync(path.join(tmpdir(), "run-agent-remember-"));
-  dirs.push(dir);
-  return dir;
+function makeEnv(): { home: string; cwd: string } {
+  const home = mkdtempSync(path.join(tmpdir(), "run-agent-remember-"));
+  dirs.push(home);
+  const cwd = path.join(home, "proj");
+  mkdirSync(cwd, { recursive: true });
+  return { home, cwd };
 }
 
-/** 在沙箱 homeDir 下构造 remember 工具。 */
-function tool(home: string) {
-  return makeRememberTool(home);
+function tool(env: { home: string; cwd: string }, isTrusted = true) {
+  return makeRememberTool({ homeDir: env.home, cwd: env.cwd, isTrusted });
 }
 
-/** 沙箱内的用户记忆文件路径。 */
-function memFile(home: string): string {
-  return path.join(home, ".config", "run-agent", "CLAUDE.md");
+function memDir(env: { home: string; cwd: string }): string {
+  return memoryDirPath(env.cwd);
+}
+
+function userMemFile(env: { home: string; cwd: string }): string {
+  return path.join(env.home, ".config", "run-agent", "CLAUDE.md");
+}
+
+/** 记忆目录下的 topic 文件（不含 MEMORY.md）。 */
+function topicFiles(env: { home: string; cwd: string }): string[] {
+  const dir = memDir(env);
+  try {
+    return readdirSync(dir).filter((f) => f.endsWith(".md") && f !== "MEMORY.md");
+  } catch {
+    return [];
+  }
 }
 
 afterEach(() => {
@@ -27,60 +42,91 @@ afterEach(() => {
   dirs = [];
 });
 
-describe("remember 写入用户级长期记忆", () => {
-  it("首次写入：创建父目录 + 记忆文件，内容为 - <条目>", async () => {
-    const home = makeHome();
-    const r = await tool(home).call({ content: "测试命令是 npm test" });
+describe("remember 项目级写入（scope 默认 project）", () => {
+  it("首次写入：建 topic 文件（frontmatter + 正文）+ MEMORY.md 索引行", async () => {
+    const env = makeEnv();
+    const r = await tool(env).call({ content: "测试命令是 npm test" });
     expect(r.result).toContain("已记住");
-    const file = memFile(home);
-    expect(existsSync(file)).toBe(true);
-    expect(readFileSync(file, "utf8")).toContain("- 测试命令是 npm test");
+
+    const files = topicFiles(env);
+    expect(files).toHaveLength(1);
+    const topic = readFileSync(path.join(memDir(env), files[0]!), "utf8");
+    expect(topic).toContain("name:");
+    expect(topic).toContain("测试命令是 npm test");
+
+    const index = readFileSync(path.join(memDir(env), "MEMORY.md"), "utf8");
+    expect(index).toMatch(/\[.*\]\(.+\.md\) — /);
   });
 
-  it("追加：多条目分行写入，不覆盖已有内容", async () => {
-    const home = makeHome();
-    const t = tool(home);
-    await t.call({ content: "第一条" });
-    await t.call({ content: "第二条" });
-    const content = readFileSync(memFile(home), "utf8");
-    expect(content).toContain("- 第一条");
-    expect(content).toContain("- 第二条");
+  it("主动沉淀不触碰用户级 CLAUDE.md", async () => {
+    const env = makeEnv();
+    await tool(env).call({ content: "某项目约定" });
+    expect(existsSync(userMemFile(env))).toBe(false);
   });
 
-  it("去重：相同条目再次写入 → 跳过，不产生重复行", async () => {
-    const home = makeHome();
-    const t = tool(home);
+  it("同内容再写（同 name）→ 跳过，不重复建文件/索引行", async () => {
+    const env = makeEnv();
+    const t = tool(env);
     await t.call({ content: "重复条目" });
     const r2 = await t.call({ content: "重复条目" });
     expect(r2.result).toContain("跳过");
-    const content = readFileSync(memFile(home), "utf8");
-    expect(content.match(/- 重复条目/g)).toHaveLength(1);
+    expect(topicFiles(env)).toHaveLength(1);
+    const index = readFileSync(path.join(memDir(env), "MEMORY.md"), "utf8");
+    expect(index.match(/- \[/g)).toHaveLength(1);
   });
 
-  it("已有文件末尾无换行时，追加仍能正确分隔", async () => {
-    const home = makeHome();
-    const file = memFile(home);
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, "- 旧条目", "utf8"); // 末尾无换行
-    await tool(home).call({ content: "新条目" });
-    const content = readFileSync(file, "utf8");
-    expect(content).toContain("- 旧条目");
-    expect(content).toContain("- 新条目");
-    expect(content).not.toContain("旧条目- 新条目");
+  it("显式 name → 对应文件名；不同内容同 name → 更新原文件与索引行，不重复建", async () => {
+    const env = makeEnv();
+    const t = tool(env);
+    await t.call({ content: "第一版", name: "feedback-testing", type: "feedback" });
+    expect(existsSync(path.join(memDir(env), "feedback-testing.md"))).toBe(true);
+
+    await t.call({ content: "第二版", name: "feedback-testing" });
+    const topic = readFileSync(path.join(memDir(env), "feedback-testing.md"), "utf8");
+    expect(topic).toContain("第二版");
+    expect(topicFiles(env)).toHaveLength(1);
   });
 
-  it("超 32KB 上限 → 拒绝写入并给出提示", async () => {
-    const home = makeHome();
-    const t = tool(home);
-    const big = "x".repeat(32 * 1024 + 1);
-    const r = await t.call({ content: big });
+  it("未信任项目 → 拒绝写入", async () => {
+    const env = makeEnv();
+    const r = await tool(env, false).call({ content: "不该写" });
+    expect(r.result).toContain("未受信任");
+    expect(topicFiles(env)).toHaveLength(0);
+  });
+
+  it("正文超 16KB → 拒绝写入", async () => {
+    const env = makeEnv();
+    const r = await tool(env).call({ content: "x".repeat(16 * 1024 + 1) });
     expect(r.result).toContain("上限");
-    // 文件未创建（拒绝写入）
-    expect(existsSync(memFile(home))).toBe(false);
+    expect(topicFiles(env)).toHaveLength(0);
   });
 
   it("空内容 → zod 解析抛错（min(1)）", async () => {
-    const home = makeHome();
-    await expect(tool(home).call({ content: "" })).rejects.toThrow();
+    const env = makeEnv();
+    await expect(tool(env).call({ content: "" })).rejects.toThrow();
+  });
+});
+
+describe("remember scope='user'（仅用户明确要求时用）", () => {
+  it("仍写用户级 CLAUDE.md（0.3.2 行为保留）", async () => {
+    const env = makeEnv();
+    const r = await tool(env).call({ content: "用户偏好：中文回复", scope: "user" });
+    expect(r.result).toContain("已记住");
+    expect(readFileSync(userMemFile(env), "utf8")).toContain("- 用户偏好：中文回复");
+  });
+
+  it("去重：相同内容再次写入 → 跳过", async () => {
+    const env = makeEnv();
+    const t = tool(env);
+    await t.call({ content: "重复条目", scope: "user" });
+    const r2 = await t.call({ content: "重复条目", scope: "user" });
+    expect(r2.result).toContain("跳过");
+  });
+
+  it("超 32KB 上限 → 拒绝写入，文件未创建", async () => {
+    const env = makeEnv();
+    const r = await tool(env).call({ content: "x".repeat(32 * 1024 + 1), scope: "user" });
+    expect(r.result).toContain("上限");
+    expect(existsSync(userMemFile(env))).toBe(false);
   });
 });

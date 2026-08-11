@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.3.2**（V3 · 记忆与上下文管理：CLAUDE.md + 自动/手动/反应式压缩 + 会话续接 + `remember` 写入记忆）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.4.0**（V4 · 主动记忆：项目级 `.run-agent/memory/` + MEMORY.md 索引 + `remember` 多 scope + `memory` 子命令）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.3.2
+run-agent --version    # 应输出 0.4.0
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
@@ -296,6 +296,8 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **上下文自动压缩**（V3）：token 估算 + 超阈值整段摘要 → 边界消息（已读文件重挂），`/compact` 手动触发，`--resume` 从摘要续起
 - **反应式压缩 + 硬截断兜底**（0.3.1）：模型报上下文超长时强制压缩重试；压缩后仍超长则丢最老消息直到 fit，并修复孤儿 tool 消息
 - **写入记忆**（0.3.2）：`remember` 工具把「用户明确要求记住 / 跨会话值得保留」的结论写进用户级 `~/.config/run-agent/CLAUDE.md`，自动去重，走权限引擎
+- **主动记忆**（0.4.0，V4）：项目级 `.run-agent/memory/`，每条记忆独立文件（frontmatter `type` + 正文），`MEMORY.md` 索引常驻 system；`remember` 默认写项目级（按 `name` 去重更新），`scope="user"` 仅用户明确要求时写；Trust 会话内只读豁免记忆目录
+- **记忆维护**（0.4.0）：`run-agent memory list/show/rm/prune` 子命令管理项目记忆；`glob`/`grep` 遍历默认忽略 `.run-agent`
 - **超大工具结果指针化**（V3）：超阈值结果落盘、消息里只留指针，模型需要时自己 `read_file`
 - **权限审批引擎**（V2）：`default` / `acceptEdits` / `bypass` 三模式，内置危险命令与敏感路径底线，支持全局 + 项目级规则
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json`，防提示注入
@@ -305,7 +307,7 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **透明**：REPL 里实时看到模型文本增量与每次工具调用及结果
 - **会话持久化**：JSONL 追加、`--resume` 原样回放（支持压缩边界续接）
 
-V3 暂不包含（路线图 V4+）：repo map、MCP、Hooks、多 agent、TUI、session 切换。
+V4 暂不包含（路线图 V5+）：repo map、MCP、Hooks、多 agent、TUI、session 切换。
 
 ## 安全模型
 
@@ -329,7 +331,8 @@ run-agent trust --list                                # 查看受信任项目
 - [记忆与上下文管理](docs/context-management.md)
 - [本地开发](docs/development.md)
 - [用法](docs/usage.md)
-- [路线图](docs/Plan.md) · [V0 交付](docs/Plan_V0.md) · [V1 实施方案](docs/Plan_V1.md) · [V2 实施方案](docs/Plan_V2.md) · [V3 实施方案](docs/Plan_V3.md)
+- [路线图](docs/Plan.md) · [V0 交付](docs/Plan_V0.md) · [V1 实施方案](docs/Plan_V1.md) · [V2 实施方案](docs/Plan_V2.md) · [V3 实施方案](docs/Plan_V3.md) · [V4 实施方案](docs/Plan_V4.md)
+- [记忆内容规范](docs/memory.md)
 - [安全说明](SECURITY.md)
 
 ## 贡献

@@ -5,7 +5,7 @@ import type { Tool, ToolCallResult } from "../tools.js";
 
 const MAX_RESULTS = 200;
 const MAX_FILE_BYTES = 512 * 1024; // 单文件超过 512KB 跳过
-const ALWAYS_IGNORE = new Set([".git", "node_modules"]);
+const ALWAYS_IGNORE = new Set([".git", "node_modules", ".run-agent"]);
 
 const schema = z.object({
   pattern: z.string().min(1).describe("Regular expression to search for"),
@@ -66,7 +66,8 @@ export const grepTool: Tool = {
   name: "grep",
   description:
     "Recursively search a directory for lines matching a regular expression. " +
-    "Returns file:line matches, skipping .git and node_modules. Optionally filter files by glob.",
+    "Returns file:line matches, skipping .git, node_modules, and .run-agent (pass an explicit " +
+    "path to search inside them). Optionally filter files by glob.",
   inputSchema: schema,
   isConcurrencySafe: true,
   async call(input): Promise<ToolCallResult> {

@@ -263,9 +263,11 @@ V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+
 
 **核心功能**：
 
-1. **子 agent（Task/subagent）**：`Agent` 工具（subagent_type / model / run_in_background）；`runAgent` 对 `query()` 递归复用 + 独立 context/abort/transcript；内置类型 general-purpose / explore（只读）/ plan；权限继承与覆盖。
+1. **子 agent（Task/subagent）**：`Agent` 工具（subagent_type / model / run_in_background）；`runAgent` 对 `query()` 递归复用 + 独立 context/abort/transcript；内置类型 general-purpose / explore（只读）/ plan / verification；权限继承与覆盖。**0.4.1 的 `explore` 在此泛化**：补 `run_in_background` 后台运行与 `model` 选择（外部用户可换低成本模型）；`thoroughness`（quick/medium/very thorough）已在 0.4.1 落地。
 2. **Coordinator 模式**：主 agent 换"协调者" system prompt，只用 Agent/SendMessage/TaskStop 三件套拆解委派 worker。
-3. **团队状态持久化**：跨会话保留 agent 定义。
+3. **验证专家子 agent**（蓝本：Claude Code `verificationAgent.ts`，与 0.4.1 `verify` 工具的关系：verify 是单文件基线——跑 tsc/eslint/test 读回错误；本项是子 agent 级对抗性验证，0.4.1 不替代）：按改动类型分策略（前端起 dev server+浏览器自动化、后端 curl+边界值、bug fix 复现原始 bug+回归、重构要求既有测试原样通过）+ 强制步骤（构建→测试→lint→回归）+ 反合理化清单（"代码看着对"→ 跑起来；实现者测试过了 → 独立验证）+ 对抗探针（并发/边界/幂等/孤儿）。**输出契约**：每条 check 必须带 `Command run`+实际输出，收尾 `VERDICT: PASS/FAIL/PARTIAL`，无命令输出的 PASS 判拒。**强制只读**：禁写项目文件，临时脚本只许 /tmp。**主 agent 契约**：非平凡改动（3+ 文件/后端/API/基础设施）完成前必须 spawn 验证 agent——FAIL → 修 → resume 验证 → 直到 PASS；PASS → 主 agent 自行 spot-check 2-3 条命令复核。
+4. **后台记忆提取子 agent**（0.4.0 记忆只做单轨，双轨在此落地；蓝本：Claude Code `extractMemories.ts`）：每个完整 query loop 结束（模型产出无工具调用的最终回复）触发一次提取——作为 `Agent` 工具的一个 background 子 agent（独立 transcript + `run_in_background`），fork 主对话上下文（共享 prompt cache）分析最近 N 条消息 → 更新 `.run-agent/memory/`。**保存策略**：有限 turn 预算（第一轮并行 read、第二轮并行 write）；四类 frontmatter + WHAT_NOT_TO_SAVE 规范 + 先查现有记忆再更新（防重复）；**主 agent 本轮已写过（hasMemoryWritesSince）则跳过**，避免重复。**触发开关**：仅 Trust + 非 `--bare`（可选）。**成本**：每 user turn 一次额外 LLM 调用——V7 阶段用低成本模型跑（同 explore 的模型选择）。**目标**：补上"主 agent 专注任务时忘了沉淀"的可靠性缺口。
+5. **团队状态持久化**：跨会话保留 agent 定义。
 
 **开源交付物**：`docs/agents.md`（子 agent 类型、如何自定义 agent frontmatter）；多 agent 集成测试。
 

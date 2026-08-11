@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -51,5 +51,26 @@ describe("CLI 冒烟（先 npm run build）", () => {
     }
     expect(code).toBe(1);
     expect(stderr).toContain("--base-url");
+  });
+
+  it("memory list 列出索引条目;show 打印全文;rm 删除", async () => {
+    const proj = mkdtempSync(join(tmpdir(), "run-agent-proj-"));
+    homes.push(proj);
+    const mem = join(proj, ".run-agent", "memory");
+    mkdirSync(mem, { recursive: true });
+    writeFileSync(join(mem, "MEMORY.md"), "- [钩子](a.md) — hook text\n", "utf8");
+    writeFileSync(join(mem, "a.md"), "---\nname: a\ndescription: 钩子\n---\nbody text\n", "utf8");
+    const env = sandboxEnv();
+
+    const list = await run(process.execPath, [distCli, "memory", "list"], { cwd: proj, env });
+    expect(list.stdout).toContain("(a.md)");
+    expect(list.stdout).toContain("hook text");
+
+    const show = await run(process.execPath, [distCli, "memory", "show", "a"], { cwd: proj, env });
+    expect(show.stdout).toContain("name: a");
+    expect(show.stdout).toContain("body text");
+
+    await run(process.execPath, [distCli, "memory", "rm", "a"], { cwd: proj, env });
+    expect(existsSync(join(mem, "a.md"))).toBe(false);
   });
 });

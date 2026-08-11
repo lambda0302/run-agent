@@ -2,6 +2,29 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.0] - 2026-08-11
+
+### Added
+
+- **主动记忆（V4，Claude Code 式）**：`<cwd>/.run-agent/memory/` 下每条记忆一个独立 md 文件
+  （frontmatter `name`/`description`/`type` + 正文），`MEMORY.md` 索引页（上限 200 行 / 25KB）
+  在 Trust 会话注入 system 稳定段，模型按需 `read_file`/`grep` 读全文；记忆是快照，冲突以现状为准。
+- **`remember` 工具工厂化 + `scope`**：默认 `scope="project"` 写项目级记忆（写 topic 文件 + 更新索引
+  一步完成，按 `name` 去重更新，正文文件 16KB / 索引 200 行 / 25KB 守卫，索引超限先预检后写并回滚）；
+  新增 `type`/`name`/`description` 参数；`scope="user"` 保留 0.3.2 用户级行为（仅用户明确要求时用）。
+  项目级写入受 Trust 门控。
+- **记忆读取豁免**：独立纯函数 `isMemoryReadExempt(tool, path, isTrusted)`——Trust 会话内
+  `read_file`/`glob`/`grep` 对 `.run-agent/memory/**` 只读放行（判定在内置 deny 之前，V4.5 移专属通道时纯移动）；
+  其余 `.run-agent` 访问与写工具/`run_bash` 命令仍全禁。
+- **遍历层对齐（前拉 V4.5 决策 F）**：`glob`/`grep` 的 `ALWAYS_IGNORE` 加入 `.run-agent`，整目录扫不会带出记忆。
+- **`run-agent memory` 子命令**：`list [query]` / `show <name>` / `rm <name>` / `prune [--days N]`（用户维护记忆，CLI 直读直写）。
+- 文档 `docs/memory.md`（内容规范：条目类型 / 不存什么 / 何时读 / 生命周期 / 安全边界）。
+- 测试：memory 模块、remember 工厂、权限豁免矩阵、MEMORY.md 注入、CLI 冒烟——共 192 个用例。
+
+### Changed
+
+- 版本号 `0.3.2` → `0.4.0`；`remember` 默认写入位置由用户级改为项目级（用户级仅显式 `scope="user"`）。
+
 ## [0.3.2] - 2026-08-11
 
 ### Added

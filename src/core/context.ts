@@ -10,6 +10,12 @@ import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { LLMMessage, ToolSpec } from "../providers/types.js";
+import {
+  MEMORY_TYPES,
+  NOT_TO_SAVE_GUIDANCE,
+  buildMemoryIndexBlock,
+  memoryDirPath,
+} from "./memory.js";
 
 // ── token 估算 ──────────────────────────────────────────────────────────────
 // CJK 区间：全角标点 + 扩展 A + 基本汉字 + 兼容表意 + 半全角形式
@@ -195,7 +201,9 @@ const STABLE_SYSTEM = `你是 run-agent，一个运行在终端里的编码 agen
 - 通过工具读写文件、搜索代码、运行命令来完成任务；一切事实以工具返回为准，不要臆造文件内容、命令输出或搜索结果。
 - 动手前先规划：小任务直接做，大任务拆成步骤逐步完成并说明进展。
 - 使用用户的语言回复，保持简洁，聚焦结论与关键改动。
-- 有长期记忆（system 里注入了 CLAUDE.md）：用户明确要求「记住」或发现值得跨会话保留的稳定结论时，用 remember 工具写入（自动去重）；不要自行猜测记忆里有什么。`;
+- 长期记忆 = 注入的 CLAUDE.md + MEMORY.md 项目记忆索引（标题+钩子）。判断与当前任务相关时，用 read_file 读对应 .md 全文再采信；记忆是快照可能过时，先对照当前代码/用户最新指示验证，冲突以现状为准，过时就更新或删除旧记忆。
+- 主动沉淀：发现值得跨会话保留的稳定结论时，用 remember 工具写入——默认写项目级（.run-agent/memory/，一步完成写文件+更新索引），type 为 ${MEMORY_TYPES.join("/")}。${NOT_TO_SAVE_GUIDANCE}
+- 用户级记忆（~/.config/run-agent/CLAUDE.md）只在用户明确要求「更新用户记忆」时才写，绝不主动改动。`;
 
 const DYNAMIC_DIVIDER = "\n\n──────────────────────── 动态上下文 ────────────────────────\n";
 
@@ -227,6 +235,10 @@ export async function buildSystemPrompt(
   const stableParts = [STABLE_SYSTEM];
   const memory = collectClaudeFiles(ctx.cwd, ctx.isTrusted, opts.homeDir);
   if (memory) stableParts.push(memory);
+
+  // V4 决策 B：MEMORY.md 索引常驻稳定段（仅 Trust 注入；--bare 已整体跳过；空索引不注入）
+  const indexBlock = await buildMemoryIndexBlock(memoryDirPath(ctx.cwd), ctx.isTrusted);
+  if (indexBlock) stableParts.push(indexBlock);
 
   return stableParts.join("\n\n") + DYNAMIC_DIVIDER + formatDynamic(ctx, git, date);
 }

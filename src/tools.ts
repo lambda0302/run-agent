@@ -6,7 +6,7 @@ import { editTool } from "./tools/edit.js";
 import { globTool } from "./tools/glob.js";
 import { grepTool } from "./tools/grep.js";
 import { bashTool } from "./tools/bash/index.js";
-import { rememberTool } from "./tools/remember.js";
+import { makeRememberTool } from "./tools/remember.js";
 
 /** 一次工具调用的返回：result 会回填进对话；artifacts 是落盘副产物路径（如被截断的完整输出）。 */
 export interface ToolCallResult {
@@ -98,16 +98,13 @@ export function toToolSpecs(tools: Tool[]): ToolSpec[] {
   }));
 }
 
-/** V1 内置工具注册表 */
-export const TOOLS: Tool[] = [
-  readTool,
-  writeTool,
-  editTool,
-  globTool,
-  grepTool,
-  bashTool,
-  rememberTool,
-];
+/** V1 内置工具注册表（静态部分；remember 需 cwd/isTrusted，由 buildTools 装配）。 */
+export const TOOLS: Tool[] = [readTool, writeTool, editTool, globTool, grepTool, bashTool];
+
+/** 运行时装配完整工具集：静态工具 + remember 工厂实例（注入 cwd/isTrusted，scope 门控用）。 */
+export function buildTools(opts: { cwd: string; isTrusted: boolean; homeDir?: string }): Tool[] {
+  return [...TOOLS, makeRememberTool(opts)];
+}
 
 export function getTool(name: string): Tool | undefined {
   return TOOLS.find((t) => t.name === name);

@@ -152,7 +152,52 @@ describe("buildSystemPrompt（稳定/动态边界）", () => {
       { cwd, isTrusted: false, bare: false },
       { homeDir: home, date: "d", git: {} },
     );
-    expect(sys).not.toContain("项目记忆");
+    // 精确断言注入的来源标注，而非字面"项目记忆"（STABLE_SYSTEM 指引里也含该词）
+    expect(sys).not.toContain("[project]");
+    expect(sys).not.toContain("[local]");
+  });
+});
+
+describe("buildSystemPrompt（MEMORY.md 索引注入,决策 B）", () => {
+  function withMemory(): { home: string; cwd: string } {
+    const { home, cwd } = makeHome();
+    const dir = path.join(cwd, ".run-agent", "memory");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "MEMORY.md"), "- [钩子](a.md) — hook text\n", "utf8");
+    writeFileSync(path.join(dir, "a.md"), "---\nname: a\n---\nbody\n", "utf8");
+    return { home, cwd };
+  }
+
+  it("Trust 且有记忆时注入 ## MEMORY.md 块;未 Trust / --bare 不注入", async () => {
+    const { home, cwd } = withMemory();
+
+    const trusted = await buildSystemPrompt(
+      { cwd, isTrusted: true, bare: false },
+      { homeDir: home, date: "d", git: {} },
+    );
+    expect(trusted).toContain("## MEMORY.md");
+    expect(trusted).toContain("(a.md)");
+
+    const untrusted = await buildSystemPrompt(
+      { cwd, isTrusted: false, bare: false },
+      { homeDir: home, date: "d", git: {} },
+    );
+    expect(untrusted).not.toContain("## MEMORY.md");
+
+    await expect(
+      buildSystemPrompt({ cwd, isTrusted: true, bare: true }, { homeDir: home }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("稳定段指引:主动沉淀默认写项目级 + 用户级仅用户明确要求 + 不存什么", async () => {
+    const { home, cwd } = makeHome();
+    const sys = await buildSystemPrompt(
+      { cwd, isTrusted: true, bare: false },
+      { homeDir: home, date: "d", git: {} },
+    );
+    expect(sys).toContain("默认写项目级");
+    expect(sys).toContain("只在用户明确要求");
+    expect(sys).toContain("不存");
   });
 });
 

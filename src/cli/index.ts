@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pkg from "../../package.json" with { type: "json" };
 import { loadConfig, resolveApiKey, resolveContextWindow } from "../config/index.js";
@@ -15,7 +16,8 @@ import {
 import type { PermissionContext, PermissionMode } from "../permissions/types.js";
 import { createClient } from "../providers/index.js";
 import type { LLMMessage, ProviderName } from "../providers/types.js";
-import { TOOLS } from "../tools.js";
+import { listMemories, pruneMemories, removeMemory, topicFilePath } from "../core/memory.js";
+import { buildTools } from "../tools.js";
 import { RunAgentError } from "../utils/errors.js";
 import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
@@ -72,6 +74,60 @@ program
       addTrustedProject(target);
       process.stdout.write(`已信任: ${path.resolve(target)}\n`);
     }
+  });
+
+/**
+ * 管理项目记忆：run-agent memory list/show/rm/prune（决策 C）。
+ * 用户发起的维护操作，CLI 直读直写 .run-agent/memory/，不走工具权限管线。
+ */
+const memoryCmd = program
+  .command("memory")
+  .description("manage project memory (.run-agent/memory/)");
+
+memoryCmd
+  .command("list")
+  .description("list memory index entries (optionally filter by keyword)")
+  .argument("[query]", "filter: matches title / hook / name")
+  .action(async (query?: string) => {
+    const entries = await listMemories(process.cwd(), query);
+    if (entries.length === 0) {
+      process.stdout.write("（无记忆条目）\n");
+      return;
+    }
+    for (const e of entries) process.stdout.write(`- [${e.title}](${e.name}.md) — ${e.hook}\n`);
+  });
+
+memoryCmd
+  .command("show")
+  .description("print a single memory file (frontmatter + body)")
+  .argument("<name>", "memory name (filename slug, no .md)")
+  .action(async (name: string) => {
+    try {
+      const raw = await readFile(topicFilePath(process.cwd(), name), "utf8");
+      process.stdout.write(raw.replace(/^﻿/, ""));
+    } catch {
+      process.stderr.write(`✗ 未找到记忆: ${name}\n`);
+      process.exit(1);
+    }
+  });
+
+memoryCmd
+  .command("rm")
+  .description("delete a memory (topic file + index line)")
+  .argument("<name>", "memory name (filename slug, no .md)")
+  .action(async (name: string) => {
+    await removeMemory(process.cwd(), name);
+    process.stdout.write(`已删除记忆: ${name}\n`);
+  });
+
+memoryCmd
+  .command("prune")
+  .description("delete memories older than N days (default 30)")
+  .option("--days <n>", "age threshold in days", "30")
+  .action(async (opts: { days: string }) => {
+    const days = Number.parseInt(opts.days, 10);
+    const n = await pruneMemories(process.cwd(), Number.isFinite(days) && days > 0 ? days : 30);
+    process.stdout.write(`已清理 ${n} 条过期记忆\n`);
   });
 
 interface CliOpts {
@@ -165,7 +221,7 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
 
   const agentOpts = {
     client,
-    tools: TOOLS,
+    tools: buildTools({ cwd, isTrusted }),
     ...(cfg.maxTokens ? { maxTokens: cfg.maxTokens } : {}),
     sessionFile,
     initialMessages,
