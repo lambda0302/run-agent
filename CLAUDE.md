@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run build        # tsup 打包 → dist/cli.js（单文件 ESM，自带 shebang）
 npm run dev          # tsup --watch
 npm run typecheck    # tsc --noEmit（strict + exactOptionalPropertyTypes）
-npm run test         # 先 build 再 vitest run（23 文件 / 235 用例）
+npm run test         # 先 build 再 vitest run（23 文件 / 236 用例）
 npx vitest run tests/tools/edit.test.ts   # 跑单个测试文件
 npm run lint / npm run lint:fix
 npm run format / npm run format:check     # prettier

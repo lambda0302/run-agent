@@ -2,6 +2,19 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.3] - 2026-08-11
+
+### Fixed
+
+- **cwd 位于 8.3 短名路径下时 cwd 内访问误判 ask**（V4.5-9，CI 全平台暴露）：`hasPermissionsToUseTool`
+  第 7 步的 Windows 可疑路径检查（决策 E）原来作用于「整个解析后路径」——GitHub Actions Windows runner
+  的 `os.tmpdir()` 落在 `...\RUNNER~1\...`（8.3 短名）下时，cwd 前缀里的环境短名也命中 `~\d` 规则，
+  导致 cwd 内一切读/写/改都被误判 ask（白名单决策 B 失效）。修复：新增 `suspiciousOutsideCwd`，
+  可疑检查只作用于「cwd 之外的用户输入部分」（cwd 内 → 只查相对部分；cwd 外含 symlink 逃逸 real
+  形态 → 全路径），纯函数 `hasSuspiciousPathPattern` 不改。真实场景：任何把工作目录建在含 8.3 短名
+  路径下（CI runner / 部分企业镜像）的用户都会遇到过度询问。
+- 测试扩充：新增「cwd 在 `~1` 短名路径下 → cwd 内不误判 ask」回归用例 → 共 **236 个用例**。
+
 ## [0.4.2] - 2026-08-11
 
 ### Removed

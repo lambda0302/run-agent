@@ -421,6 +421,29 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     ).toBe("ask");
   });
 
+  // ── V4.5-9 回归：cwd 自身位于 8.3 短名路径下（如 CI runner 的 RUNNER~1）不误判 ──
+  it("cwd 自身在含 ~1 的短名路径下 → cwd 内访问不被误判 ask（复刻 GH Actions Windows runner）", () => {
+    const parent = tempDir();
+    const short = path.join(parent, "RUNNER~1"); // 名字含 `~`+数字，命中 8.3 短名规则
+    mkdirSync(short);
+    const dir = path.join(short, "work");
+    mkdirSync(dir);
+    dirs.push(short, dir);
+    process.chdir(dir);
+    const cwd = process.cwd();
+    // 用户输入部分是干净的 `a.ts`（cwd 前缀的环境短名不参与可疑检查）
+    expect(hasPermissionsToUseTool("read_file", { file_path: "a.ts" }, "default", RULES, false, cwd)).toBe(
+      "allow",
+    );
+    expect(
+      hasPermissionsToUseTool("write_file", { file_path: "a.ts" }, "acceptEdits", RULES, false, cwd),
+    ).toBe("allow");
+    // 用户输入部分自身带短名 → 仍 ask（决策 E 语义保留）
+    expect(
+      hasPermissionsToUseTool("read_file", { file_path: "PROGRA~1" }, "default", RULES, false, cwd),
+    ).toBe("ask");
+  });
+
   // ── realpath 双形态：symlink 逃逸被拦 ──
   it.skipIf(!canSymlink())("symlink 目录别名指向 .run-agent → realpath 后命中危险目录 deny", () => {
     const dir = workdir();

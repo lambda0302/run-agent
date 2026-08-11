@@ -206,6 +206,24 @@ export function pathMatchesGlob(p: string, glob: string): boolean {
 }
 
 /**
+ * 可疑路径模式检查的「用户输入视角」版本（V4.5-9 修复）：
+ * 只对「cwd 之外的部分」做 hasSuspiciousPathPattern 检查。cwd 自身可能合法地位于含
+ * 8.3 短名/其它 Windows 模式的路径下——如 GitHub Actions Windows runner 的 os.tmpdir()
+ * 落在 `...\RUNNER~1\...`（Vitest 工作目录建在其下），若对整个解析后形态检查，cwd 内
+ * 一切访问都会被误判 ask（决策 E 本来就是保守 ask，误伤面被环境路径放大）。
+ * cwd 内 → 只查相对部分（用户输入）；cwd 外（含 symlink 换名逃逸的 real 形态）→ 全路径，
+ * 逃逸路径的短名/设备名仍会被拦下。
+ */
+function suspiciousOutsideCwd(p: string, cwd: string): boolean {
+  for (const cf of pathForms(cwd)) {
+    const withSep = cf.endsWith(path.sep) ? cf : cf + path.sep;
+    if (p === cf) return false; // 路径恰为 cwd → 无用户输入部分
+    if (p.startsWith(withSep)) return hasSuspiciousPathPattern(p.slice(withSep.length));
+  }
+  return hasSuspiciousPathPattern(p);
+}
+
+/**
  * 规则匹配。path 维度对两个形态各查一遍（任一形态命中即算匹配——用户规则与内置底线同样按
  * realpath 双形态执行，决策 E 1）；command 维度作用于 run_bash。
  */
@@ -286,7 +304,7 @@ export function hasPermissionsToUseTool(
 
   // 7. 白名单 + 模式兜底
   if (tool === "run_bash") return "ask";
-  if (p && forms && forms.some(hasSuspiciousPathPattern)) return "ask";
+  if (p && forms && forms.some((f) => suspiciousOutsideCwd(f, cwd))) return "ask";
   if (!p) {
     // 无路径入参的工具（repo_map/explore/verify/remember/glob 无 path 等）：不参与 cwd 边界
     if (mode === "acceptEdits") return "allow";
