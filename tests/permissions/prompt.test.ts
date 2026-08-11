@@ -19,7 +19,14 @@ const runBash = TOOLS.find((t) => t.name === "run_bash") as Tool;
 const readFile = TOOLS.find((t) => t.name === "read_file") as Tool;
 
 function ctx(over: Partial<PermissionContext> = {}): PermissionContext {
-  return { mode: "default", rules: [], canPrompt: true, isTrusted: false, cwd: process.cwd(), ...over };
+  return {
+    mode: "default",
+    rules: [],
+    canPrompt: true,
+    isTrusted: false,
+    cwd: process.cwd(),
+    ...over,
+  };
 }
 
 const dirs: string[] = [];

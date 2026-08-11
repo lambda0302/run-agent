@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { executeToolCalls } from "../../src/core/execute.js";
+import { executeToolCalls, StreamingToolExecutor } from "../../src/core/execute.js";
 import type { Decision } from "../../src/permissions/types.js";
 import type { ToolUseBlock } from "../../src/providers/types.js";
 import type { Tool } from "../../src/tools.js";
@@ -149,5 +149,69 @@ describe("executeToolCalls 异常与权限", () => {
     });
     expect(calls).toEqual(["read"]);
     expect(results).toEqual(["read:read:7"]);
+  });
+});
+
+// ── V5 决策 C：StreamingToolExecutor 直测（流式边执行语义）──────────────────────────
+describe("StreamingToolExecutor 流式即时执行", () => {
+  it("addTool 后工具立即启动（不等 getResults）", async () => {
+    const read = makeTool("read", 40, true);
+    const exec = new StreamingToolExecutor({ tools: [read.tool] });
+    await exec.addTool(tu("read", "a", { id: 1 }), 0);
+    // addTool 只等权限校验+入队，工具本体已 fire-and-forget 启动
+    expect(read.maxActive()).toBe(1);
+    expect(await exec.getResults()).toEqual(["read:1"]);
+  });
+
+  it("写类执行期间不并入 safe 工具；写一次一个、不打断，随后 safe 并行", async () => {
+    const read = makeTool("read", 30, true);
+    const write = makeTool("write", 20, false);
+    const exec = new StreamingToolExecutor({ tools: [read.tool, write.tool] });
+    await exec.addTool(tu("write", "w1", { id: 1 }), 0);
+    await exec.addTool(tu("read", "r1", { id: 10 }), 1);
+    await exec.addTool(tu("read", "r2", { id: 20 }), 2);
+    // write 20ms 先完成（期间 read 不入队执行）→ read 两个随后并行
+    expect(await exec.getResults()).toEqual(["write:1", "read:10", "read:20"]);
+    expect(write.maxActive()).toBe(1);
+    expect(read.maxActive()).toBe(2);
+  });
+
+  it("getResults 等待全部完成且幂等（可并发调用多次）", async () => {
+    const read = makeTool("read", 30, true);
+    const exec = new StreamingToolExecutor({ tools: [read.tool] });
+    await exec.addTool(tu("read", "a", { id: 1 }), 0);
+    const p1 = exec.getResults();
+    const p2 = exec.getResults();
+    expect(await p1).toEqual(["read:1"]);
+    expect(await p2).toEqual(["read:1"]);
+  });
+
+  it("addTool 权限 deny → 立即回填且不执行工具本体", async () => {
+    const read = makeTool("read", 0, true);
+    let called = false;
+    const exec = new StreamingToolExecutor({
+      tools: [read.tool],
+      checkPermission: async () => {
+        called = true;
+        return "deny";
+      },
+    });
+    await exec.addTool(tu("read", "a", { id: 1 }), 0);
+    expect(called).toBe(true);
+    expect(await exec.getResults()).toEqual(["权限被拒绝: 未授权执行 read"]);
+  });
+
+  it("工具池为函数时每次 addTool 重新解析（动态 MCP 场景）", async () => {
+    const read = makeTool("read", 0, true);
+    let resolved = 0;
+    const toolsFn = () => {
+      resolved++;
+      return [read.tool];
+    };
+    const exec = new StreamingToolExecutor({ tools: toolsFn });
+    await exec.addTool(tu("read", "a", { id: 1 }), 0);
+    await exec.addTool(tu("read", "b", { id: 2 }), 1);
+    expect(resolved).toBe(2); // 每个 block 解析一次
+    expect(await exec.getResults()).toEqual(["read:1", "read:2"]);
   });
 });

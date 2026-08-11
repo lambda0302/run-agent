@@ -195,6 +195,11 @@ export interface SystemContext {
   isTrusted: boolean;
   /** --bare：禁用全部记忆与动态上下文注入 */
   bare: boolean;
+  /** V5 决策 A4：本会话装配了 plan 模式工具（仅交互 REPL）时注入引导。 */
+  hasPlanMode?: boolean;
+  /** V5 决策 B3：已配置的 MCP server 摘要（如 "filesystem(stdio), github(http)"）；
+   *  非空时动态段注入「已配置 + 调 mcp_connect 连接」引导。 */
+  mcpServers?: string;
 }
 
 const STABLE_SYSTEM = `你是 run-agent，一个运行在终端里的编码 agent。
@@ -209,6 +214,16 @@ const DYNAMIC_DIVIDER = "\n\n─────────────────
 
 function formatDynamic(ctx: SystemContext, git: GitContext, date: string): string {
   const bits: string[] = [`当前时间: ${date}`, `工作目录: ${ctx.cwd}`];
+  if (ctx.hasPlanMode) {
+    bits.push(
+      "plan 模式：复杂/多文件/设计型任务先调用 enter_plan_mode 只读探索，再用 exit_plan_mode 呈现计划，批准后自动恢复执行",
+    );
+  }
+  if (ctx.mcpServers) {
+    bits.push(
+      `MCP servers 已配置: ${ctx.mcpServers} — 需要时调 mcp_connect <name> 按需连接（连接后其工具以 mcp__<server>__<tool> 调用）`,
+    );
+  }
   const gitBits: string[] = [];
   if (git.branch) gitBits.push(`分支 ${git.branch}`);
   if (git.sha) gitBits.push(`commit ${git.sha}`);

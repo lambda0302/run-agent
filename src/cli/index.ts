@@ -14,13 +14,18 @@ import {
   loadTrustedProjects,
   removeTrustedProject,
 } from "../permissions/store.js";
-import { hasPermissionsToUseTool } from "../permissions/engine.js";
+import { hasPermissionsToUseTool, isBuiltinReadOnlyTool } from "../permissions/engine.js";
 import type { Decision, PermissionContext, PermissionMode } from "../permissions/types.js";
 import { createClient } from "../providers/index.js";
 import type { LLMMessage, ProviderName } from "../providers/types.js";
 import { listMemories, pruneMemories, removeMemory, topicFilePath } from "../core/memory.js";
 import { buildTools } from "../tools.js";
 import type { Tool } from "../tools.js";
+import { makePlanTools } from "../tools/plan_mode.js";
+import type { PlanTools } from "../tools/plan_mode.js";
+import { loadMcpConfig } from "../services/mcp/config.js";
+import { makeMcpConnectTool } from "../services/mcp/mcp_connect.js";
+import { McpManager } from "../services/mcp/manager.js";
 import { RunAgentError } from "../utils/errors.js";
 import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
@@ -211,8 +216,48 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
 
   const ctx: PermissionContext = { mode, rules, canPrompt, isTrusted, cwd };
 
+  // ── V5 决策 A：plan 模式导航工具（仅 REPL 装配；one-shot 无审批弹窗，防死锁）────
+  let planCtrl: PlanTools | undefined;
+  if (!prompt) {
+    planCtrl = makePlanTools({
+      getMode: () => ctx.mode,
+      setMode: (m) => {
+        ctx.mode = m;
+      },
+      canPrompt,
+    });
+  }
+
+  // ── V5 决策 B：MCP 连接管理器（配置了 server 才创建；默认不预连省 token/资源）────
+  const mcpConfig = loadMcpConfig(cwd, isTrusted);
+  let mcpManager: McpManager | undefined;
+  if (Object.keys(mcpConfig.servers).length > 0) {
+    mcpManager = new McpManager(mcpConfig.servers);
+    if (mcpConfig.preconnect) {
+      // 高级选项：启动即全量连接（默认 false）。连接失败各自进 failed 态，不阻断启动。
+      await Promise.all(mcpManager.serverNames().map((name) => mcpManager!.connect(name)));
+    }
+    // 进程退出清理所有子进程/连接（fire-and-forget；stdio transport 内部有 SIGINT→SIGTERM→SIGKILL 升级）
+    process.on("exit", () => {
+      void mcpManager?.closeAll();
+    });
+  }
+
   // ── V3 上下文：system 组装所需 + 生效的上下文窗口 ────────────────
-  const systemCtx: SystemContext = { cwd, isTrusted, bare: Boolean(opts.bare) };
+  const systemCtx: SystemContext = {
+    cwd,
+    isTrusted,
+    bare: Boolean(opts.bare),
+    ...(planCtrl ? { hasPlanMode: true } : {}),
+    ...(mcpManager
+      ? {
+          mcpServers: mcpManager
+            .serverNames()
+            .map((n) => `${n}(${mcpConfig.servers[n]!.type})`)
+            .join(", "),
+        }
+      : {}),
+  };
   const contextWindow = resolveContextWindow(cfg);
 
   // ── 0.4.1 explore 子 agent：复用主 system 快照 + 继承父级权限 ────────
@@ -220,7 +265,14 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
   // 绝不另建 readline（stdin 只能有一个读者）。--bare 时 buildSystemPrompt 返回 undefined。
   const system = await buildSystemPrompt(systemCtx);
   const exploreCheckPermission = async (tool: Tool, input: unknown): Promise<Decision> => {
-    const d = hasPermissionsToUseTool(tool.name, input, ctx.mode, ctx.rules, ctx.isTrusted, ctx.cwd);
+    const d = hasPermissionsToUseTool(
+      tool.name,
+      input,
+      ctx.mode,
+      ctx.rules,
+      ctx.isTrusted,
+      ctx.cwd,
+    );
     return d === "ask" ? "deny" : d;
   };
 
@@ -238,22 +290,35 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     process.stderr.write(`✓ 会话 ${sessionFile}\n`);
   }
 
+  // V5 决策 B4：只读判定闭包 = 内置只读 ∪ explore ∪ MCP readOnlyHint（权限管线并入）
+  const readOnlyNames = (name: string): boolean =>
+    isBuiltinReadOnlyTool(name) || name === "explore" || (mcpManager?.isReadOnly(name) ?? false);
+
+  // 静态工具一次装配（含 mcp_connect）；MCP 已连接工具每轮动态追加（函数池，决策 B3）
+  const baseTools = buildTools({
+    cwd,
+    isTrusted,
+    client,
+    ...(system !== undefined ? { system } : {}),
+    ...(contextWindow ? { contextWindow } : {}),
+    checkPermission: exploreCheckPermission,
+    ...(planCtrl ? { planMode: planCtrl } : {}),
+    ...(mcpManager ? { mcpConnect: makeMcpConnectTool(mcpManager) } : {}),
+  });
+  const agentTools = (): Tool[] => [...baseTools, ...(mcpManager?.getConnectedTools() ?? [])];
+
   const agentOpts = {
     client,
-    tools: buildTools({
-      cwd,
-      isTrusted,
-      client,
-      ...(system !== undefined ? { system } : {}),
-      ...(contextWindow ? { contextWindow } : {}),
-      checkPermission: exploreCheckPermission,
-    }),
+    tools: agentTools,
     ...(cfg.maxTokens ? { maxTokens: cfg.maxTokens } : {}),
     sessionFile,
     initialMessages,
     ctx,
     contextWindow,
     systemCtx,
+    ...(planCtrl ? { planMode: planCtrl } : {}),
+    ...(mcpManager ? { mcpManager } : {}),
+    ...(mcpManager ? { readOnlyNames } : {}),
     // 决策 8：超大工具结果落盘到 session 同目录（r0.txt/r1.txt…），消息里只留指针
     resultsDir: path.dirname(sessionFile),
   };

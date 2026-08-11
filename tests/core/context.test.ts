@@ -117,6 +117,21 @@ describe("buildSystemPrompt（稳定/动态边界）", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("hasPlanMode 时注入 plan 模式引导（仅交互 REPL）", async () => {
+    const { home, cwd } = makeHome();
+    const sys = await buildSystemPrompt(
+      { cwd, isTrusted: false, bare: false, hasPlanMode: true },
+      { homeDir: home, date: "d", git: {} },
+    );
+    expect(sys).toContain("enter_plan_mode");
+    expect(sys).toContain("exit_plan_mode");
+    const noPlan = await buildSystemPrompt(
+      { cwd, isTrusted: false, bare: false },
+      { homeDir: home, date: "d", git: {} },
+    );
+    expect(noPlan).not.toContain("enter_plan_mode");
+  });
+
   it("注入日期/git/CLAUDE.md，动态在稳定之后", async () => {
     const { home, cwd } = makeHome();
     mkdirSync(path.join(home, ".config", "run-agent"), { recursive: true });

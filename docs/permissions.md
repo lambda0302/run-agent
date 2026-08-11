@@ -5,23 +5,41 @@ V2 引入**权限审批引擎**、**只读并行/写串行**、**Trust 信任边
 
 ## 权限模式
 
-仅两档：`default` / `acceptEdits`（`bypass` 已于 0.4.2 删除）。解析优先级：
+CLI 可选两档：`default` / `acceptEdits`（`bypass` 已于 0.4.2 删除）；外加**会话内动态模式 `plan`**
+（0.5.0，强制只读，见下）。两档 CLI 模式的解析优先级：
 
-1. `--mode <default|acceptEdits>`（非法值由 commander 直接报错）
+1. `--mode <default|acceptEdits>`（非法值由 commander 直接报错，`plan` 也报非法——它不是 CLI 可选项）
 2. 环境变量 `RUN_AGENT_MODE`
 3. `~/.config/run-agent/config.json` 的 `"permissionMode"`
 4. 默认 `default`
 
 > 环境变量 / 配置文件里的旧值 `"bypass"`（或其它非法值）会**回退 `default`** 并在启动时打印一条警告（温和降级，不崩溃）。
 
-| 模式          | 只读工具（cwd 内） | 写/改工具（cwd 内） | `run_bash` |
-| ------------- | ------------------ | ------------------- | ---------- |
-| `default`     | 免确认             | 询问确认            | 询问确认   |
-| `acceptEdits` | 免确认             | 免确认              | 询问确认   |
+| 模式          | 只读工具（cwd 内） | 写/改工具（cwd 内） | `run_bash`   |
+| ------------- | ------------------ | ------------------- | ------------ |
+| `default`     | 免确认             | 询问确认            | 询问确认     |
+| `acceptEdits` | 免确认             | 免确认              | 询问确认     |
+| `plan`        | 免确认             | **一律拒绝**        | **一律拒绝** |
 
-> 只读工具 = `read_file` / `glob` / `grep` / `repo_map`。交互 REPL 里，需要确认的操作会弹出
-> `[y=本次允许 / n=拒绝 / a=始终允许]`；选 `a` 会写一条**全局**规则到 `permissions.json`。
+> 只读工具 = `read_file` / `glob` / `grep` / `repo_map` / `explore`（plan 下也放行，它内部只用只读工具）。
+> 交互 REPL 里，需要确认的操作会弹出 `[y=本次允许 / n=拒绝 / a=始终允许]`；选 `a` 会写一条**全局**规则到 `permissions.json`。
 > **one-shot（`run-agent "..."`）不弹确认，一律降级拒绝**，避免挂起。
+
+### Plan 模式（0.5.0）
+
+`plan` 是**会话内动态模式**，只由 `enter_plan_mode` 进入、`exit_plan_mode` 退出（用户也可敲 `/plan`
+直接进入）。plan 下强制只读：写/改/执行类工具（`write_file` / `edit_file` / `run_bash` / `verify` /
+`remember` / MCP 非只读工具）一律 deny；只读工具 cwd 内放行、cwd 外 ask；`enter_plan_mode` 自身放行、
+`exit_plan_mode` 放行（它的审批由 REPL 弹窗负责）。`exit_plan_mode` 把计划直写 `.run-agent/plans/`
+并弹 `y/n` 审批，批准后恢复进入前的模式（`prePlanMode`）。one-shot 不装配 plan 工具、无 `/plan`。
+详见 [plan-mode.md](plan-mode.md)。
+
+### MCP 工具的只读判定（0.5.0 `readOnlyNames`）
+
+权限判定第 7 参 `readOnlyNames`（缺省 = 内置只读 ∪ explore，语义不变）把 **MCP 工具的 readOnlyHint**
+并入只读集合：只读 hint 的 MCP 工具按只读对待（cwd 内放行 / plan 下放行），非只读 MCP 工具
+`default` 必 ask、`acceptEdits` 放行、**plan 下 deny**。`mcp_connect` 免确认（配置动作），plan 下 deny。
+详见 [mcp.md](mcp.md)。
 
 ## 三层模型
 
@@ -81,12 +99,12 @@ symlink 换名逃逸，并兼容 macOS `/var`→`/private/var` 之类的系统 s
 
 规则字段（全部可选，缺省即对该维度不设限）：
 
-| 字段      | 类型                     | 作用于                                                       |
-| --------- | ------------------------ | ------------------------------------------------------------ |
-| `tool`    | 精确工具名或 `*`         | 工具名                                                       |
+| 字段      | 类型                     | 作用于                                                                             |
+| --------- | ------------------------ | ---------------------------------------------------------------------------------- |
+| `tool`    | 精确工具名或 `*`         | 工具名                                                                             |
 | `path`    | glob（`*`/`**`/`?`）     | 工具入参的 `file_path` / `path` / `cwd`（resolve 归一化，realpath 双形态各查一遍） |
-| `command` | 正则                     | `run_bash` 的 `command`                                      |
-| `action`  | `allow` / `ask` / `deny` | 命中时的决策                                                 |
+| `command` | 正则                     | `run_bash` 的 `command`                                                            |
+| `action`  | `allow` / `ask` / `deny` | 命中时的决策                                                                       |
 
 示例：
 

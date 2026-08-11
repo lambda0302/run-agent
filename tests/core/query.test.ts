@@ -12,6 +12,9 @@ import type {
 } from "../../src/providers/types.js";
 import { runQuery } from "../../src/core/query.js";
 import type { Decision } from "../../src/permissions/types.js";
+import { makeMcpConnectTool } from "../../src/services/mcp/mcp_connect.js";
+import { McpManager } from "../../src/services/mcp/manager.js";
+import { startMockServer } from "../services/mcp/mockServer.js";
 import type { Tool } from "../../src/tools.js";
 
 const spillDirs: string[] = [];
@@ -552,5 +555,146 @@ describe("runQuery 0.3.1 反应式压缩 + 硬截断兜底", () => {
     ).rejects.toThrow("prompt is too long");
     expect(rc.mainCalls).toBe(1);
     expect(rc.summaryCalls).toBe(0);
+  });
+});
+
+// ── V5 决策 B3：动态工具注入（M2 验收——mcp_connect 注册的工具下一轮可调）────────
+// ── V5 决策 C：流式期间即时执行（工具早于 done 事件启动）─────────────────────────
+describe("runQuery 流式即时执行（V5 决策 C）", () => {
+  it("第一个工具在 done 事件前已启动、结果在 done 后才完成（执行跨越流边界）", async () => {
+    let doneYielded = false;
+    let toolStartedBeforeDone = false;
+    let toolFinishedAfterDone = false;
+    let call = 0;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const client: LLMClient = {
+      provider: "fake",
+      async *stream(): AsyncIterable<StreamEvent> {
+        call++;
+        if (call === 1) {
+          yield { type: "text", text: "思考中" };
+          yield { type: "tool_use", id: "t1", name: "slow", input: { text: "x" } };
+          // 模型仍在输出（30ms）——工具应在此前已启动
+          await sleep(30);
+          doneYielded = true;
+          yield { type: "done", stopReason: "tool_use" };
+        } else {
+          yield { type: "text", text: "完成" };
+          yield { type: "done", stopReason: "end_turn" };
+        }
+      },
+    };
+    const slow: Tool = {
+      name: "slow",
+      description: "slow",
+      inputSchema: z.object({ text: z.string() }),
+      isConcurrencySafe: true,
+      async call(input) {
+        // 工具执行 60ms > 流式剩余 30ms：证明执行在流式期间开始、结果在流结束后才回填
+        await sleep(60);
+        return { result: `slow:${(input as { text: string }).text}` };
+      },
+    };
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client,
+      tools: [slow],
+      onToolCall: () => {
+        if (!doneYielded) toolStartedBeforeDone = true;
+      },
+      onToolResult: () => {
+        if (doneYielded) toolFinishedAfterDone = true;
+      },
+    });
+
+    expect(toolStartedBeforeDone).toBe(true); // 边流式边执行：启动早于 done
+    expect(toolFinishedAfterDone).toBe(true); // 结果跨越流边界：getResults 等全部完成
+    expect(r.reply).toBe("完成");
+    expect(r.messages.some((m) => m.role === "tool" && m.content === "slow:x")).toBe(true);
+  });
+
+  it("transient 错误发生在工具启动后 → 已启动工具被 drain（等其完成）再重试，不悬挂不残留", async () => {
+    let call = 0;
+    let slowDone = false;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const client: LLMClient = {
+      provider: "fake",
+      async *stream(): AsyncIterable<StreamEvent> {
+        call++;
+        if (call === 1) {
+          yield { type: "tool_use", id: "t1", name: "slow", input: { text: "x" } };
+          await sleep(5); // 工具已启动后流才报错
+          throw Object.assign(new Error("socket hang up"), { status: 503 });
+        }
+        yield { type: "text", text: "ok" };
+        yield { type: "done", stopReason: "end_turn" };
+      },
+    };
+    const slow: Tool = {
+      name: "slow",
+      description: "slow",
+      inputSchema: z.object({ text: z.string() }),
+      async call(input) {
+        await sleep(40);
+        slowDone = true;
+        return { result: `slow:${(input as { text: string }).text}` };
+      },
+    };
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client,
+      tools: [slow],
+      maxRetries: 2,
+    });
+    expect(call).toBe(2); // 第 1 次报错 → 重试成功
+    expect(slowDone).toBe(true); // 已启动的工具被 drain 完成（无后台残留）
+    expect(r.reply).toBe("ok");
+  });
+});
+
+describe("runQuery 动态工具（V5 决策 B3）", () => {
+  it("模型先调 mcp_connect 连接 mock server → 下一轮调 mcp__mock__echo 成功", async () => {
+    const fake = new FakeClient([
+      [
+        { type: "tool_use", id: "c1", name: "mcp_connect", input: { server: "mock" } },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "tool_use", id: "e1", name: "mcp__mock__echo", input: { x: "hi" } },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text", text: "完成" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+
+    const srv = await startMockServer([{ name: "echo", handler: (a) => `mock:${String(a.x)}` }]);
+    // transportOverrides：mcp_connect 内部走 manager.connect（无显式 transport），
+    // 经构造器注入 InMemoryTransport 覆盖按配置构建（生产不传，走真实 stdio/http/sse）
+    const manager = new McpManager(
+      { mock: { type: "stdio", command: "x" } },
+      { mock: srv.clientTransport },
+    );
+    const tools = (): Tool[] => [makeMcpConnectTool(manager), ...manager.getConnectedTools()];
+    const calls: string[] = [];
+
+    try {
+      const r = await runQuery([{ role: "user", content: "连接并回显 hi" }], {
+        client: fake,
+        tools,
+        onToolCall: (name) => calls.push(name),
+      });
+
+      expect(r.reply).toBe("完成");
+      expect(r.iterations).toBe(3);
+      // 调用序列：先连接、再调 MCP 工具
+      expect(calls).toEqual(["mcp_connect", "mcp__mock__echo"]);
+      // 第二轮起的工具列表应含 MCP 工具（动态注入生效）
+      const second = fake.toolSpecs[1]!;
+      expect(second.some((s) => s.name === "mcp__mock__echo")).toBe(true);
+      expect(second.some((s) => s.name === "mcp_connect")).toBe(true);
+    } finally {
+      await manager.closeAll();
+      await srv.close();
+    }
   });
 });

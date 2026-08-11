@@ -17,11 +17,12 @@ import {
   normalizeToolPairing,
   spillOversizedResult,
 } from "./compact.js";
-import { executeToolCalls } from "./execute.js";
+import { StreamingToolExecutor } from "./execute.js";
 
 export interface RunQueryOptions {
   client: LLMClient;
-  tools: Tool[];
+  /** V5 决策 B3：工具池可为函数（每轮重建——mcp_connect 注册新 MCP 工具后，下一轮迭代即可调用）。 */
+  tools: Tool[] | (() => Tool[]);
   maxTokens?: number;
   /** 防止死循环的轮数上限（V1 无 compact，靠它兜底） */
   maxIterations?: number;
@@ -91,7 +92,8 @@ export async function runQuery(
   const maxRetries =
     opts.maxRetries ??
     (Number.isFinite(envRetries) && envRetries >= 0 ? Math.floor(envRetries) : DEFAULT_MAX_RETRIES);
-  const toolSpecs = toToolSpecs(opts.tools);
+  // V5 决策 B3：每轮解析工具池（函数 → 重建；mcp_connect 注册后下一轮即可调用）
+  const getTools = (): Tool[] => (typeof opts.tools === "function" ? opts.tools() : opts.tools);
   const added: LLMMessage[] = [];
   let compacts = 0;
   let spillSeq = 0;
@@ -116,7 +118,7 @@ export async function runQuery(
     ) {
       const compactResult = await maybeAutoCompact(messages, {
         client: opts.client,
-        tools: opts.tools,
+        tools: getTools(),
         ...(opts.system !== undefined ? { system: opts.system } : {}),
         contextWindow: opts.contextWindow,
       });
@@ -129,14 +131,26 @@ export async function runQuery(
       }
     }
 
-    // 流式请求：transient 错误（429/5xx/网络）指数退避重试；重试会丢弃已收集的增量重来一整轮
+    // V5 决策 B3：工具 spec 每轮重建（MCP 工具按需连接后动态注入下一轮）
+    const toolSpecs = toToolSpecs(getTools());
+
+    // V5 决策 C：流式执行器——tool_use block 一完整就 addTool 入队执行，不必等响应完结。
+    // 每次 stream 尝试新建一个：transient 重试/反应式压缩会丢弃旧尝试的已收集增量。
     let textParts: string[] = [];
     let toolUses: ToolUseBlock[] = [];
     let stopReason: StopReason = "end_turn";
     let attempt = 0;
+    let executor: StreamingToolExecutor | null = null;
     // 0.3.1 反应式压缩阶段：0=未反应；1=已强制压缩；2=已硬截断（再超长则抛原错误）
     let reactiveStage = 0;
     for (;;) {
+      // 工具池传函数（getTools）：每轮解析，MCP 工具同轮连接后后续 block 也能找到
+      executor = new StreamingToolExecutor({
+        tools: getTools,
+        ...(opts.checkPermission ? { checkPermission: opts.checkPermission } : {}),
+        ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
+        ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
+      });
       try {
         // system 拼到请求消息数组首条（不进 messages，适配器已会抽顶层/内联）
         const requestMessages: LLMMessage[] = opts.system
@@ -150,20 +164,32 @@ export async function runQuery(
             textParts.push(ev.text);
             opts.onText?.(ev.text);
           } else if (ev.type === "tool_use") {
-            toolUses.push({ type: "tool_use", id: ev.id, name: ev.name, input: ev.input });
+            const block: ToolUseBlock = {
+              type: "tool_use",
+              id: ev.id,
+              name: ev.name,
+              input: ev.input,
+            };
+            toolUses.push(block);
+            // 流式期间即时执行：block 完整即入队（只读并行/写串行由 executor 调度）。
+            // await 只等权限校验+入队，工具本体执行是 fire-and-forget，不阻塞流继续。
+            await executor.addTool(block, toolUses.length - 1);
           } else if (ev.type === "done") {
             stopReason = ev.stopReason;
           }
         }
         break;
       } catch (e) {
+        // 先收尾本尝试已入队的执行：工具可能在错误前已启动，必须等其完成再重试，
+        // 否则旧任务残留在后台、onToolResult 会与重试轮交叠。
+        await executor.getResults();
         // 0.3.1 反应式压缩：模型报上下文超长 → 强制压缩/硬截断后重试（每轮至多一次，防死循环）
         if (isPromptTooLong(e)) {
           if (!opts.contextWindow || reactiveStage >= 2) throw e;
           if (reactiveStage === 0) {
             const c = await maybeAutoCompact(messages, {
               client: opts.client,
-              tools: opts.tools,
+              tools: getTools(),
               ...(opts.system !== undefined ? { system: opts.system } : {}),
               contextWindow: opts.contextWindow,
               force: true, // 模型已经说不下了，忽略估算阈值
@@ -209,30 +235,30 @@ export async function runQuery(
     for (const t of toolUses) blocks.push(t);
     pushConversation({ role: "assistant", content: blocks.length ? blocks : "" });
 
+    // V5 决策 C：流式期间工具已即时执行；流结束统一 getResults（等全部完成）并按 index 回填。
+    // 非 end_turn 一律回填 tool_result：max_tokens/error 下已执行的工具结果也落地，
+    // 避免孤儿 tool_use 与模型重复执行同批工具。
+    const results = executor ? await executor.getResults() : [];
+    for (let i = 0; i < toolUses.length; i++) {
+      let content: string = results[i] ?? "";
+      // 决策 8：超大结果落盘换指针（需 resultsDir；缺省原样进消息列表）
+      if (opts.resultsDir) {
+        content = await spillOversizedResult(content, spillSeq++, opts.resultsDir);
+      }
+      pushConversation({ role: "tool", tool_use_id: toolUses[i]!.id, content });
+    }
+
     if (stopReason === "end_turn") {
+      // end_turn 下模型未请求工具（toolUses 应为空）；即便异常非空也保持原语义返回
       return { messages, reply, iterations, added, compacts };
     }
 
     if (stopReason === "tool_use") {
-      const results = await executeToolCalls(toolUses, {
-        tools: opts.tools,
-        ...(opts.checkPermission ? { checkPermission: opts.checkPermission } : {}),
-        ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
-        ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
-      });
-      for (let i = 0; i < toolUses.length; i++) {
-        let content: string = results[i]!;
-        // 决策 8：超大结果落盘换指针（需 resultsDir；缺省原样进消息列表）
-        if (opts.resultsDir) {
-          content = await spillOversizedResult(content, spillSeq++, opts.resultsDir);
-        }
-        pushConversation({ role: "tool", tool_use_id: toolUses[i]!.id, content });
-      }
       continue;
     }
 
     if (stopReason === "max_tokens") {
-      // V1 无 compact：截断时追加提示继续，让模型把话说完
+      // V1 无 compact：截断时追加提示继续，让模型把话说完（已执行的工具结果已回填）
       pushConversation({ role: "user", content: "[输出被截断，请继续完成当前任务]" });
       continue;
     }

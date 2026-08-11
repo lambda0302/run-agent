@@ -1,8 +1,10 @@
 /**
- * V3 权限引擎的类型定义（V4.5 决策 A：bypass 已于 0.4.2 删除）。
- * 模式：default（危险/写操作询问）/ acceptEdits（写/改免确认——仅 cwd 内，bash 仍询问）。
+ * V3 权限引擎的类型定义（V4.5 决策 A：bypass 已于 0.4.2 删除；V5 决策 A1：加 plan）。
+ * 模式：default（危险/写操作询问）/ acceptEdits（写/改免确认——仅 cwd 内，bash 仍询问）/
+ *       plan（强制只读计划态——只读探索 allow、写/执行 deny；非 CLI 可选项，仅由
+ *       enter_plan_mode / /plan 进入、exit_plan_mode 退出）。
  */
-export type PermissionMode = "default" | "acceptEdits";
+export type PermissionMode = "default" | "acceptEdits" | "plan";
 
 export type Decision = "allow" | "ask" | "deny";
 

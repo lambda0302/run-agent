@@ -222,22 +222,38 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     const claude = path.join("proj", ".claude", "settings.json");
     const agent = path.join("proj", ".run-agent", "permissions.json");
     for (const p of [gitCfg, claude, agent]) {
-      expect(hasPermissionsToUseTool("read_file", { file_path: p }, "default", RULES, false, dir), p).toBe(
-        "deny",
-      );
-      expect(hasPermissionsToUseTool("edit_file", { file_path: p }, "default", RULES, false, dir), p).toBe(
-        "deny",
-      );
+      expect(
+        hasPermissionsToUseTool("read_file", { file_path: p }, "default", RULES, false, dir),
+        p,
+      ).toBe("deny");
+      expect(
+        hasPermissionsToUseTool("edit_file", { file_path: p }, "default", RULES, false, dir),
+        p,
+      ).toBe("deny");
     }
   });
 
   it("内置 deny：大小写变体 .RUN-AGENT / .Git → deny（决策 E 2 小写化比较）", () => {
     const dir = workdir();
     expect(
-      hasPermissionsToUseTool("read_file", { file_path: "proj/.RUN-AGENT/x" }, "default", RULES, false, dir),
+      hasPermissionsToUseTool(
+        "read_file",
+        { file_path: "proj/.RUN-AGENT/x" },
+        "default",
+        RULES,
+        false,
+        dir,
+      ),
     ).toBe("deny");
     expect(
-      hasPermissionsToUseTool("read_file", { file_path: "proj/.Git/config" }, "default", RULES, false, dir),
+      hasPermissionsToUseTool(
+        "read_file",
+        { file_path: "proj/.Git/config" },
+        "default",
+        RULES,
+        false,
+        dir,
+      ),
     ).toBe("deny");
   });
 
@@ -278,9 +294,9 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
   // ── 白名单 cwd 内兜底 ──
   it("default：cwd 内只读工具 allow、bash ask、写/改 ask", () => {
     const dir = workdir();
-    expect(hasPermissionsToUseTool("read_file", { file_path: "a.ts" }, "default", RULES, false, dir)).toBe(
-      "allow",
-    );
+    expect(
+      hasPermissionsToUseTool("read_file", { file_path: "a.ts" }, "default", RULES, false, dir),
+    ).toBe("allow");
     expect(
       hasPermissionsToUseTool("glob", { pattern: "**/*.ts" }, "default", RULES, false, dir),
     ).toBe("allow");
@@ -303,12 +319,12 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     const dir = workdir();
     const outside = tempDir();
     const p = path.join(outside, "secret.txt");
-    expect(hasPermissionsToUseTool("read_file", { file_path: p }, "default", RULES, false, dir)).toBe(
+    expect(
+      hasPermissionsToUseTool("read_file", { file_path: p }, "default", RULES, false, dir),
+    ).toBe("ask");
+    expect(hasPermissionsToUseTool("grep", { path: outside }, "default", RULES, false, dir)).toBe(
       "ask",
     );
-    expect(
-      hasPermissionsToUseTool("grep", { path: outside }, "default", RULES, false, dir),
-    ).toBe("ask");
     expect(
       hasPermissionsToUseTool("read_file", { file_path: p }, "acceptEdits", RULES, false, dir),
     ).toBe("ask");
@@ -318,10 +334,24 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     const dir = workdir();
     const outside = tempDir();
     expect(
-      hasPermissionsToUseTool("write_file", { file_path: "a.ts" }, "acceptEdits", RULES, false, dir),
+      hasPermissionsToUseTool(
+        "write_file",
+        { file_path: "a.ts" },
+        "acceptEdits",
+        RULES,
+        false,
+        dir,
+      ),
     ).toBe("allow");
     expect(
-      hasPermissionsToUseTool("edit_file", { file_path: "src/x.ts" }, "acceptEdits", RULES, false, dir),
+      hasPermissionsToUseTool(
+        "edit_file",
+        { file_path: "src/x.ts" },
+        "acceptEdits",
+        RULES,
+        false,
+        dir,
+      ),
     ).toBe("allow");
     expect(
       hasPermissionsToUseTool(
@@ -333,9 +363,9 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
         dir,
       ),
     ).toBe("ask");
-    expect(hasPermissionsToUseTool("run_bash", { command: "ls" }, "acceptEdits", RULES, false, dir)).toBe(
-      "ask",
-    );
+    expect(
+      hasPermissionsToUseTool("run_bash", { command: "ls" }, "acceptEdits", RULES, false, dir),
+    ).toBe("ask");
   });
 
   // ── 无路径工具（不参与 cwd 边界）──
@@ -361,19 +391,38 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     expect(hasPermissionsToUseTool("run_bash", { command: "ls" }, "default", allowThenDeny)).toBe(
       "deny",
     );
-    expect(hasPermissionsToUseTool("run_bash", { command: "ls" }, "default", [...allowThenDeny].reverse())).toBe(
-      "deny",
-    );
+    expect(
+      hasPermissionsToUseTool(
+        "run_bash",
+        { command: "ls" },
+        "default",
+        [...allowThenDeny].reverse(),
+      ),
+    ).toBe("deny");
   });
 
   it("规则可按路径 glob 命中（对 realpath 双形态各查一遍）", () => {
     const dir = workdir();
     const rules: PermissionRule[] = [{ path: "**/build/**", action: "deny" }];
     expect(
-      hasPermissionsToUseTool("write_file", { file_path: "proj/build/out.js" }, "default", rules, false, dir),
+      hasPermissionsToUseTool(
+        "write_file",
+        { file_path: "proj/build/out.js" },
+        "default",
+        rules,
+        false,
+        dir,
+      ),
     ).toBe("deny");
     expect(
-      hasPermissionsToUseTool("write_file", { file_path: "proj/src/out.js" }, "default", rules, false, dir),
+      hasPermissionsToUseTool(
+        "write_file",
+        { file_path: "proj/src/out.js" },
+        "default",
+        rules,
+        false,
+        dir,
+      ),
     ).toBe("ask");
   });
 
@@ -392,9 +441,9 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     expect(hasPermissionsToUseTool("run_bash", { command: "rm -rf /" }, "default", rules)).toBe(
       "deny",
     );
-    expect(
-      hasPermissionsToUseTool("read_file", { file_path: "p/.git/c" }, "default", rules),
-    ).toBe("deny");
+    expect(hasPermissionsToUseTool("read_file", { file_path: "p/.git/c" }, "default", rules)).toBe(
+      "deny",
+    );
     expect(
       hasPermissionsToUseTool("read_file", { file_path: "p/.run-agent/x" }, "default", rules),
     ).toBe("deny");
@@ -413,9 +462,9 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
   // 尾随空格会被 inputPath trim 掉、UNC/ADS 平台相关，这两类由 hasSuspiciousPathPattern 单测覆盖。
   it("Windows 可疑路径模式 → ask（default 只读也 ask；不归一化）", () => {
     const dir = workdir();
-    expect(hasPermissionsToUseTool("read_file", { file_path: "a." }, "default", RULES, false, dir)).toBe(
-      "ask",
-    );
+    expect(
+      hasPermissionsToUseTool("read_file", { file_path: "a." }, "default", RULES, false, dir),
+    ).toBe("ask");
     expect(
       hasPermissionsToUseTool("read_file", { file_path: "PROGRA~1" }, "default", RULES, false, dir),
     ).toBe("ask");
@@ -432,11 +481,18 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     process.chdir(dir);
     const cwd = process.cwd();
     // 用户输入部分是干净的 `a.ts`（cwd 前缀的环境短名不参与可疑检查）
-    expect(hasPermissionsToUseTool("read_file", { file_path: "a.ts" }, "default", RULES, false, cwd)).toBe(
-      "allow",
-    );
     expect(
-      hasPermissionsToUseTool("write_file", { file_path: "a.ts" }, "acceptEdits", RULES, false, cwd),
+      hasPermissionsToUseTool("read_file", { file_path: "a.ts" }, "default", RULES, false, cwd),
+    ).toBe("allow");
+    expect(
+      hasPermissionsToUseTool(
+        "write_file",
+        { file_path: "a.ts" },
+        "acceptEdits",
+        RULES,
+        false,
+        cwd,
+      ),
     ).toBe("allow");
     // 用户输入部分自身带短名 → 仍 ask（决策 E 语义保留）
     expect(
@@ -451,10 +507,24 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     trySymlinkDir(path.join(dir, ".run-agent"), path.join(dir, "alias"));
     // 目标尚不存在也拦（realpath 父目录 + basename 兜底），写新文件同样逃不掉
     expect(
-      hasPermissionsToUseTool("read_file", { file_path: "alias/inner/x" }, "default", RULES, false, dir),
+      hasPermissionsToUseTool(
+        "read_file",
+        { file_path: "alias/inner/x" },
+        "default",
+        RULES,
+        false,
+        dir,
+      ),
     ).toBe("deny");
     expect(
-      hasPermissionsToUseTool("write_file", { file_path: "alias/inner/new.txt" }, "acceptEdits", RULES, false, dir),
+      hasPermissionsToUseTool(
+        "write_file",
+        { file_path: "alias/inner/new.txt" },
+        "acceptEdits",
+        RULES,
+        false,
+        dir,
+      ),
     ).toBe("deny");
   });
 
@@ -464,7 +534,14 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     writeFileSync(path.join(outside, "secret.txt"), "x");
     trySymlinkDir(outside, path.join(dir, "out"));
     expect(
-      hasPermissionsToUseTool("read_file", { file_path: "out/secret.txt" }, "default", RULES, false, dir),
+      hasPermissionsToUseTool(
+        "read_file",
+        { file_path: "out/secret.txt" },
+        "default",
+        RULES,
+        false,
+        dir,
+      ),
     ).toBe("ask");
   });
 
@@ -477,12 +554,12 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
       expect(
         hasPermissionsToUseTool("read_file", { file_path: memFile }, "default", RULES, true, dir),
       ).toBe("allow");
-      expect(
-        hasPermissionsToUseTool("glob", { path: memFile }, "default", RULES, true, dir),
-      ).toBe("allow");
-      expect(
-        hasPermissionsToUseTool("grep", { path: memFile }, "default", RULES, true, dir),
-      ).toBe("allow");
+      expect(hasPermissionsToUseTool("glob", { path: memFile }, "default", RULES, true, dir)).toBe(
+        "allow",
+      );
+      expect(hasPermissionsToUseTool("grep", { path: memFile }, "default", RULES, true, dir)).toBe(
+        "allow",
+      );
     });
 
     it("未 Trust → 豁免不生效；缺省 isTrusted=false 同样无豁免", () => {
@@ -539,10 +616,209 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
 
     it("用户 deny 规则优先于专属通道（决策 D 第 2 步先于第 3 步）", () => {
       const dir = workdir();
-      const deny: PermissionRule[] = [{ tool: "read_file", path: "**/.run-agent/memory/**", action: "deny" }];
+      const deny: PermissionRule[] = [
+        { tool: "read_file", path: "**/.run-agent/memory/**", action: "deny" },
+      ];
       expect(
         hasPermissionsToUseTool("read_file", { file_path: memFile }, "default", deny, true, dir),
       ).toBe("deny");
     });
+  });
+});
+
+// ── V5 决策 A1：plan 分支（强制只读）────────────────────────────────────────
+describe("hasPermissionsToUseTool plan 分支（V5 决策 A1）", () => {
+  // REPL 装配时的只读闭包：内置只读 ∪ explore（repl.ts isReadOnlyName）
+  const readOnlyPlusExplore = (name: string) =>
+    ["read_file", "glob", "grep", "repo_map", "explore"].includes(name);
+
+  it("plan 下：写/改/run_bash/verify/remember → deny", () => {
+    const dir = workdir();
+    expect(
+      hasPermissionsToUseTool("write_file", { file_path: "a.ts" }, "plan", RULES, false, dir),
+    ).toBe("deny");
+    expect(
+      hasPermissionsToUseTool("edit_file", { file_path: "a.ts" }, "plan", RULES, false, dir),
+    ).toBe("deny");
+    expect(
+      hasPermissionsToUseTool("run_bash", { command: "ls -la" }, "plan", RULES, false, dir),
+    ).toBe("deny");
+    expect(hasPermissionsToUseTool("verify", {}, "plan", RULES, false, dir)).toBe("deny");
+    expect(
+      hasPermissionsToUseTool("remember", { content: "记住 x" }, "plan", RULES, false, dir),
+    ).toBe("deny");
+  });
+
+  it("plan 下：内置危险命令仍 deny（步骤 1 先于 plan 分支）", () => {
+    const dir = workdir();
+    expect(
+      hasPermissionsToUseTool("run_bash", { command: "rm -rf /" }, "plan", RULES, false, dir),
+    ).toBe("deny");
+  });
+
+  it("plan 下：只读 cwd 内 → allow（read/glob/grep/repo_map/explore）", () => {
+    const dir = workdir();
+    const inputs: Record<string, unknown> = {
+      read_file: { file_path: "a.ts" },
+      glob: { pattern: "**/*.ts", path: "src" },
+      grep: { pattern: "x", path: "src" },
+      repo_map: {},
+      explore: { prompt: "探索一下" },
+    };
+    for (const name of ["read_file", "glob", "grep", "repo_map", "explore"]) {
+      expect(
+        hasPermissionsToUseTool(name, inputs[name], "plan", RULES, false, dir, readOnlyPlusExplore),
+        name,
+      ).toBe("allow");
+    }
+  });
+
+  it("plan 下：只读 cwd 外 → ask（canPrompt=false 时由 prompt 层降级 deny）", () => {
+    const dir = workdir();
+    const outside = tempDir();
+    expect(
+      hasPermissionsToUseTool(
+        "read_file",
+        { file_path: path.join(outside, "secret.txt") },
+        "plan",
+        RULES,
+        false,
+        dir,
+        readOnlyPlusExplore,
+      ),
+    ).toBe("ask");
+  });
+
+  it("plan 下：记忆读豁免（Trust）仍放行", () => {
+    const dir = workdir();
+    const mem = path.join("proj", ".run-agent", "memory", "a.md");
+    expect(
+      hasPermissionsToUseTool(
+        "read_file",
+        { file_path: mem },
+        "plan",
+        RULES,
+        true,
+        dir,
+        readOnlyPlusExplore,
+      ),
+    ).toBe("allow");
+  });
+
+  it("plan 下：enter_plan_mode → allow；exit_plan_mode → ask（用户审批）", () => {
+    const dir = workdir();
+    expect(hasPermissionsToUseTool("enter_plan_mode", {}, "plan", RULES, false, dir)).toBe("allow");
+    expect(
+      hasPermissionsToUseTool("exit_plan_mode", { plan: "x" }, "plan", RULES, false, dir),
+    ).toBe("ask");
+  });
+
+  it("default/acceptEdits 下导航工具免确认；缺省 readOnlyNames 下 explore 在 plan 中 deny（保守缺省）", () => {
+    const dir = workdir();
+    expect(hasPermissionsToUseTool("enter_plan_mode", {}, "default", RULES)).toBe("allow");
+    expect(hasPermissionsToUseTool("exit_plan_mode", { plan: "x" }, "acceptEdits", RULES)).toBe(
+      "allow",
+    );
+    // 未传 readOnlyNames（缺省 = 内置只读）→ explore 不在集内 → plan 下 deny
+    expect(hasPermissionsToUseTool("explore", { prompt: "x" }, "plan", RULES, false, dir)).toBe(
+      "deny",
+    );
+  });
+});
+
+// ── V5 决策 B4：MCP 工具权限（mcp_connect 免确认 + readOnlyNames 矩阵）────────
+describe("hasPermissionsToUseTool MCP（V5 决策 B4）", () => {
+  // REPL 装配闭包：内置只读 ∪ explore ∪ MCP readOnlyHints（mcp__srv__ro_op）
+  const readOnlyWithMcp = (name: string) =>
+    ["read_file", "glob", "grep", "repo_map", "explore", "mcp__srv__ro_op"].includes(name);
+
+  it("mcp_connect 免确认：default/acceptEdits 下 allow；plan 下 deny（保守）", () => {
+    const dir = workdir();
+    for (const mode of ["default", "acceptEdits"] as const) {
+      expect(
+        hasPermissionsToUseTool("mcp_connect", { server: "srv" }, mode, RULES, false, dir),
+        mode,
+      ).toBe("allow");
+    }
+    // plan 分支先于导航豁免：连接会 spawn 子进程/开网络会话，plan 强制只读 → deny
+    expect(
+      hasPermissionsToUseTool("mcp_connect", { server: "srv" }, "plan", RULES, false, dir),
+    ).toBe("deny");
+  });
+
+  it("MCP 只读工具（readOnlyHint）在 plan 下 allow；写工具 deny", () => {
+    const dir = workdir();
+    expect(
+      hasPermissionsToUseTool(
+        "mcp__srv__ro_op",
+        { path: "a.txt" },
+        "plan",
+        RULES,
+        false,
+        dir,
+        readOnlyWithMcp,
+      ),
+    ).toBe("allow");
+    expect(
+      hasPermissionsToUseTool(
+        "mcp__srv__write",
+        { path: "a.txt" },
+        "plan",
+        RULES,
+        false,
+        dir,
+        readOnlyWithMcp,
+      ),
+    ).toBe("deny");
+  });
+
+  it("MCP 只读 hint 缺失（缺省 readOnlyNames）→ plan 下 deny（保守缺省）", () => {
+    const dir = workdir();
+    // 未传 readOnlyNames → mcp 工具不在集内 → plan 下 deny
+    expect(
+      hasPermissionsToUseTool("mcp__srv__ro_op", { path: "a.txt" }, "plan", RULES, false, dir),
+    ).toBe("deny");
+  });
+
+  it("MCP 非只读工具 default/acceptEdits 语义：default ask / acceptEdits allow", () => {
+    const dir = workdir();
+    expect(
+      hasPermissionsToUseTool(
+        "mcp__srv__write",
+        { path: "a.txt" },
+        "default",
+        RULES,
+        false,
+        dir,
+        readOnlyWithMcp,
+      ),
+    ).toBe("ask");
+    expect(
+      hasPermissionsToUseTool(
+        "mcp__srv__write",
+        { path: "a.txt" },
+        "acceptEdits",
+        RULES,
+        false,
+        dir,
+        readOnlyWithMcp,
+      ),
+    ).toBe("allow");
+  });
+
+  it("default 下 MCP 工具走同一管线：用户 deny 规则作用于 mcp 工具", () => {
+    const dir = workdir();
+    const deny = [{ tool: "mcp__srv__rm", action: "deny" as const }];
+    expect(
+      hasPermissionsToUseTool(
+        "mcp__srv__rm",
+        { path: "x" },
+        "default",
+        deny,
+        false,
+        dir,
+        readOnlyWithMcp,
+      ),
+    ).toBe("deny");
   });
 });

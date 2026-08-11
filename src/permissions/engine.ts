@@ -1,7 +1,8 @@
 /**
  * V3 权限判定引擎（零依赖，纯函数）。
- * 判定顺序（V4.5 决策 D，bypass 删除后）：
- *   内置危险命令 → 用户 deny → 专属通道 → 危险目录 → bash 正则 → 用户 allow → 白名单(cwd) → 兜底 ask。
+ * 判定顺序（V4.5 决策 D，bypass 删除后；V5 决策 A1 加 plan 分支、B3 加 mcp_connect 免确认）：
+ *   内置危险命令 → plan 分支（强制只读）→ 导航工具（enter/exit_plan_mode / mcp_connect 免确认）
+ *   → 用户 deny → 专属通道 → 危险目录 → bash 正则 → 用户 allow → 白名单(cwd) → 兜底 ask。
  * 对齐 Claude Code 的 hasPermissionsToUseTool 混合模型，但更保守：公开项目误拦比漏拦安全。
  */
 import { realpathSync } from "node:fs";
@@ -24,6 +25,12 @@ const AGENT_DIR_BASH_RE = /(?<=^|[\s\\/'"`=(;|&])\.run-agent(?![\w-])/;
 
 /** 只读工具：default 模式下免确认。repo_map 为 0.4.1 只读定位工具。 */
 const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep", "repo_map"]);
+
+/** 内置只读判定（V5 决策 B4）：hasPermissionsToUseTool 第 7 参 readOnlyNames 的缺省值。
+ *  REPL 装配时并入 explore（只读探索子 agent）与 MCP 只读 hint 名，见 repl.ts。 */
+export function isBuiltinReadOnlyTool(name: string): boolean {
+  return READ_ONLY_TOOLS.has(name);
+}
 
 /**
  * 记忆目录读专属通道（V4 决策 A / V4.5 决策 C）：Trust 会话内，三个只读工具对
@@ -87,9 +94,7 @@ export function inputPath(input: unknown): string | undefined {
   const p = o.file_path ?? o.path ?? o.cwd;
   if (typeof p === "string" && p.trim()) {
     const trimmed = p.trim();
-    return path.resolve(
-      trimmed.startsWith("~") ? path.join(homedir(), trimmed.slice(1)) : trimmed,
-    );
+    return path.resolve(trimmed.startsWith("~") ? path.join(homedir(), trimmed.slice(1)) : trimmed);
   }
   return undefined;
 }
@@ -267,6 +272,7 @@ export function hasPermissionsToUseTool(
   rules: PermissionRule[],
   isTrusted = false,
   cwd = process.cwd(),
+  readOnlyNames: (name: string) => boolean = isBuiltinReadOnlyTool,
 ): Decision {
   // 1. 内置危险命令
   if (tool === "run_bash" && classifyBashCommand(bashCommand(input) ?? "") === "dangerous") {
@@ -275,6 +281,30 @@ export function hasPermissionsToUseTool(
 
   const p = inputPath(input);
   const forms = p ? pathForms(p) : undefined;
+
+  // V5 决策 A1：plan 分支（在危险命令检查后、其余判定前——plan 是最高优先级的一档状态，
+  // 写/执行一律 deny，不受用户模式影响）。判定顺序见文件头注释。
+  if (mode === "plan") {
+    // enter_plan_mode 放行（它自身处理「已在 plan 中」报错）
+    if (tool === "enter_plan_mode") return "allow";
+    // exit_plan_mode 返回 ask：engine 放行工具本身，用户审批由 repl 的 ask 弹窗负责
+    if (tool === "exit_plan_mode") return "ask";
+    // 只读探索（readOnlyNames 覆盖内置只读 + explore + MCP 只读 hint）：
+    //   无路径入参（explore/repo_map）→ allow；cwd 内 / 记忆读豁免 → allow；cwd 外 → ask
+    if (readOnlyNames(tool)) {
+      if (!p) return "allow";
+      if (forms && forms.every((f) => isMemoryReadExempt(tool, f, isTrusted))) return "allow";
+      if (pathInCwd(p, cwd)) return "allow";
+      return "ask";
+    }
+    // 其余（写类 / run_bash / verify / remember / MCP 非只读）→ deny
+    return "deny";
+  }
+
+  // 导航工具（非 plan 模式）：模式切换免权限确认；「不在 plan 模式」的报错语义在工具层。
+  // mcp_connect 同样免确认（V5 决策 B3：用户写好配置 = 已授权；项目级配置仅 Trust 加载是第二道门）。
+  if (tool === "enter_plan_mode" || tool === "exit_plan_mode" || tool === "mcp_connect")
+    return "allow";
 
   // 2. 用户 deny 规则（优先于一切内置放行）
   for (const rule of rules) {

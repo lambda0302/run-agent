@@ -34,7 +34,9 @@ const schema = z.object({
   command: z
     .string()
     .optional()
-    .describe("Override command template (default per detected toolchain). Use {file} for the target path"),
+    .describe(
+      "Override command template (default per detected toolchain). Use {file} for the target path",
+    ),
 });
 
 /** 允许的检查工具词：命令必须引用其一，否则拒绝。 */

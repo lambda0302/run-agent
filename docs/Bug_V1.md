@@ -3,16 +3,16 @@
 > 阶段：2026-08-10 ｜ 交付：`0.1.0`（ReAct loop + 4 适配器 + 6 工具 + 配置 + REPL + 会话持久化，58 测试）
 > 来源：会话记录、CHANGELOG `[0.1.0] Fixed`、git 提交。所有条目均已解决。
 
-| # | Bug | 类别 | 严重度 | 状态 |
-| -- | ---------------------------------------------------- | ---------------- | ------ | ---- |
-| V1-1 | OpenAI 流式 `tool_calls` 跨 chunk 分片聚合 | 适配器 | 高 | ✅ 已解决 |
-| V1-2 | Anthropic 流式 `input_json_delta` 聚合 + `tool_result` 块 | 适配器 | 高 | ✅ 已解决 |
-| V1-3 | Edit 工具处理不了不可见 BOM 字符（源码里还混入了字面 BOM） | 文件工具 | 中 | ✅ 已解决 |
-| V1-4 | glob `**` 分支漏子文件且结果重复 | 文件工具 | 中 | ✅ 已解决 |
-| V1-5 | `latestSessionFile` 返回 `undefined`，`--resume` 续不上 | 会话持久化 | 中 | ✅ 已解决 |
-| V1-6 | zod v4 移除 `_def.typeName`，`zodToJsonSchema` 崩 | 工具机制 | 高 | ✅ 已解决 |
-| V1-7 | strict TS 约束：`exactOptionalPropertyTypes` / `verbatimModuleSyntax` | 编译约束 | 低 | ✅ 已规避 |
-| V1-8 | `.env` 加载函数写了但从未接线（V1 遗留，0.2.0 前修复） | 配置 | 中 | ✅ 已解决 |
+| #    | Bug                                                                   | 类别       | 严重度 | 状态      |
+| ---- | --------------------------------------------------------------------- | ---------- | ------ | --------- |
+| V1-1 | OpenAI 流式 `tool_calls` 跨 chunk 分片聚合                            | 适配器     | 高     | ✅ 已解决 |
+| V1-2 | Anthropic 流式 `input_json_delta` 聚合 + `tool_result` 块             | 适配器     | 高     | ✅ 已解决 |
+| V1-3 | Edit 工具处理不了不可见 BOM 字符（源码里还混入了字面 BOM）            | 文件工具   | 中     | ✅ 已解决 |
+| V1-4 | glob `**` 分支漏子文件且结果重复                                      | 文件工具   | 中     | ✅ 已解决 |
+| V1-5 | `latestSessionFile` 返回 `undefined`，`--resume` 续不上               | 会话持久化 | 中     | ✅ 已解决 |
+| V1-6 | zod v4 移除 `_def.typeName`，`zodToJsonSchema` 崩                     | 工具机制   | 高     | ✅ 已解决 |
+| V1-7 | strict TS 约束：`exactOptionalPropertyTypes` / `verbatimModuleSyntax` | 编译约束   | 低     | ✅ 已规避 |
+| V1-8 | `.env` 加载函数写了但从未接线（V1 遗留，0.2.0 前修复）                | 配置       | 中     | ✅ 已解决 |
 
 ---
 

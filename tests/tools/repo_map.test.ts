@@ -113,7 +113,10 @@ describe("buildRepoMap（git 仓库两遍排序）", () => {
   });
 
   it("maxBytes 截断输出（默认 4096）", async () => {
-    const lines = Array.from({ length: 50 }, (_, i) => `export function fn${i}(x: number) {}\n`).join("");
+    const lines = Array.from(
+      { length: 50 },
+      (_, i) => `export function fn${i}(x: number) {}\n`,
+    ).join("");
     const dir = gitInitRepo({ "src/a.ts": lines });
     process.chdir(dir);
     const out = await buildRepoMap("a.ts", 200);

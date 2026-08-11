@@ -25,13 +25,13 @@
 
 核心文件：`src/utils/sessionStorage.ts`（69 行，自 v0.1.0 起未变，V2 未改动此层）。
 
-| 要素 | 实现 |
-|---|---|
-| 存储位置 | `~/.local/share/run-agent/sessions/`（基于 `homedir()`） |
-| 文件命名 | `<ISO时间戳去冒号点>-<6位随机base36>.jsonl` |
-| 单行格式 | `{ ts, message: LLMMessage }`，逐行 `appendFile` 追加 |
-| 读取 | `loadSession()` 逐行 `JSON.parse` 重建消息数组，坏行 `try/catch` 跳过 |
-| resume | `latestSessionFile()` 按文件名字典序倒序取最新 → `loadSession` 回放 messages |
+| 要素     | 实现                                                                         |
+| -------- | ---------------------------------------------------------------------------- |
+| 存储位置 | `~/.local/share/run-agent/sessions/`（基于 `homedir()`）                     |
+| 文件命名 | `<ISO时间戳去冒号点>-<6位随机base36>.jsonl`                                  |
+| 单行格式 | `{ ts, message: LLMMessage }`，逐行 `appendFile` 追加                        |
+| 读取     | `loadSession()` 逐行 `JSON.parse` 重建消息数组，坏行 `try/catch` 跳过        |
+| resume   | `latestSessionFile()` 按文件名字典序倒序取最新 → `loadSession` 回放 messages |
 
 写入时机（`src/cli/repl.ts`）：用户 prompt 先追加一行，`runQuery` 跑完后把本轮新增消息 `result.messages.slice(before)` 逐条追加。
 
@@ -46,16 +46,16 @@
 
 **短板（按严重程度）：**
 
-| 短板 | 后果 |
-|---|---|
-| `/clear` 只清内存不清盘 | 清空后 `--resume` 旧历史原样回来，清空语义被打破 |
-| 无会话元数据 | 没存模型/provider/项目路径/版本/token 用量；resume 沿用旧上下文却不知道当初的配置 |
-| 无 compact/摘要 | 长会话全量重放，token 线性膨胀，迟早撞 `maxTokens` |
-| 坏行"吞错"而非告警 | 跳过一行 `tool_result` 可能让后续 `tool_use` 回放对不上，静默失败 |
-| `--resume` 只能续最新 | 不能指定历史会话，会话文件的唯一 id 未暴露 |
-| 全局平铺、跨项目串会话 | 两个项目的会话混在一个目录，`--resume` 只认全局最新 |
-| 字典序==时间序假设脆弱 | 依赖文件名等长且前缀不变，结构一改就静默出错 |
-| 无并发保护 | 两进程同时 resume 同一文件会交错追加 |
+| 短板                    | 后果                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| `/clear` 只清内存不清盘 | 清空后 `--resume` 旧历史原样回来，清空语义被打破                                  |
+| 无会话元数据            | 没存模型/provider/项目路径/版本/token 用量；resume 沿用旧上下文却不知道当初的配置 |
+| 无 compact/摘要         | 长会话全量重放，token 线性膨胀，迟早撞 `maxTokens`                                |
+| 坏行"吞错"而非告警      | 跳过一行 `tool_result` 可能让后续 `tool_use` 回放对不上，静默失败                 |
+| `--resume` 只能续最新   | 不能指定历史会话，会话文件的唯一 id 未暴露                                        |
+| 全局平铺、跨项目串会话  | 两个项目的会话混在一个目录，`--resume` 只认全局最新                               |
+| 字典序==时间序假设脆弱  | 依赖文件名等长且前缀不变，结构一改就静默出错                                      |
+| 无并发保护              | 两进程同时 resume 同一文件会交错追加                                              |
 
 ---
 
@@ -134,27 +134,27 @@
 
 - 自动触发（接近上下文上限时，`trigger:"auto"`），也可手动 `/compact`。
 - **内联、append-only、不截断**：向同一文件追加一条 `system`/`compact_boundary` 记录（带 `preTokens/postTokens/cumulativeDroppedTokens/preservedSegment`）
-  + 一条 `isCompactSummary: true` 的 `user` 摘要消息。旧内容留在盘上，摘要里还会指明回读完整 transcript 的路径。
+  - 一条 `isCompactSummary: true` 的 `user` 摘要消息。旧内容留在盘上，摘要里还会指明回读完整 transcript 的路径。
 - resume 时用 `compactMetadata.preservedSegment` 重建有效链，物理上在 boundary 之前的非保留消息被剪掉。
 
 ---
 
 ## 3. 逐项对比
 
-| 维度 | run-agent V1 | Claude Code |
-|---|---|---|
-| 目录结构 | 全局平铺 `sessions/` | `projects/<sanitized-cwd>/`，按项目隔离 |
-| 文件名 | `<时间戳>-<id>.jsonl` | `<uuid>.jsonl`（uuid==sessionId） |
-| 行粒度 | 一条 LLMMessage | 一个 Entry 记录（assistant 回合多行 + 控制记录） |
-| 消息身份 | 无 | 每条 `uuid` + `parentUuid` 链 |
-| 每行元数据 | 无 | `sessionId/cwd/version/gitBranch/slug/model/usage…` 全量 |
-| 找最新/续接 | 文件名字典序 | `last-prompt.leafUuid` 指针 + mtime |
-| 写路径 | 逐条 `appendFile` | 100ms 批量队列 + `0o600` + 退出 flush + 元数据重写 |
-| 读路径 | 整文件逐行 | 64KB 头尾渐进 + 1MB 流式加载 |
-| compact | 无（排到 V3） | 内联 boundary + summary，append-only 不截断 |
-| 恢复范围 | 消息数组 | 完整 AppState（agent/model/worktree/文件历史/attribution/todos） |
-| 坏数据 | 坏行跳过（吞错） | 按 uuid 去重 + 链手术（relink/snip） |
-| 模型 | 消息日志 | 状态存储（图） |
+| 维度        | run-agent V1          | Claude Code                                                      |
+| ----------- | --------------------- | ---------------------------------------------------------------- |
+| 目录结构    | 全局平铺 `sessions/`  | `projects/<sanitized-cwd>/`，按项目隔离                          |
+| 文件名      | `<时间戳>-<id>.jsonl` | `<uuid>.jsonl`（uuid==sessionId）                                |
+| 行粒度      | 一条 LLMMessage       | 一个 Entry 记录（assistant 回合多行 + 控制记录）                 |
+| 消息身份    | 无                    | 每条 `uuid` + `parentUuid` 链                                    |
+| 每行元数据  | 无                    | `sessionId/cwd/version/gitBranch/slug/model/usage…` 全量         |
+| 找最新/续接 | 文件名字典序          | `last-prompt.leafUuid` 指针 + mtime                              |
+| 写路径      | 逐条 `appendFile`     | 100ms 批量队列 + `0o600` + 退出 flush + 元数据重写               |
+| 读路径      | 整文件逐行            | 64KB 头尾渐进 + 1MB 流式加载                                     |
+| compact     | 无（排到 V3）         | 内联 boundary + summary，append-only 不截断                      |
+| 恢复范围    | 消息数组              | 完整 AppState（agent/model/worktree/文件历史/attribution/todos） |
+| 坏数据      | 坏行跳过（吞错）      | 按 uuid 去重 + 链手术（relink/snip）                             |
+| 模型        | 消息日志              | 状态存储（图）                                                   |
 
 ---
 

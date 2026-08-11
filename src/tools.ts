@@ -11,6 +11,7 @@ import { makeRememberTool } from "./tools/remember.js";
 import { makeExploreTool } from "./tools/explore.js";
 import { repoMapTool } from "./tools/repo_map.js";
 import { verifyTool } from "./tools/verify.js";
+import type { PlanTools } from "./tools/plan_mode.js";
 
 /** 一次工具调用的返回：result 会回填进对话；artifacts 是落盘副产物路径（如被截断的完整输出）。 */
 export interface ToolCallResult {
@@ -125,9 +126,13 @@ export interface BuildToolsOptions {
   contextWindow?: number;
   /** 权限继承父级（子查询只读工具 default 免确认，用户 deny 规则仍生效）。 */
   checkPermission?: (tool: Tool, input: unknown) => Promise<Decision>;
+  /** V5 决策 A：plan 模式导航工具（makePlanTools 的结果）。仅 REPL 传；one-shot 不传（无审批弹窗，防死锁）。 */
+  planMode?: PlanTools;
+  /** V5 决策 B3：mcp_connect 工具（makeMcpConnectTool 的结果）。配置了 MCP server 才装配。 */
+  mcpConnect?: Tool;
 }
 
-/** 运行时装配完整工具集：静态工具 + remember/explore 工厂实例（注入运行时依赖）。 */
+/** 运行时装配完整工具集：静态工具 + remember/explore 工厂实例 + plan 导航工具（注入运行时依赖）。 */
 export function buildTools(opts: BuildToolsOptions): Tool[] {
   const tools: Tool[] = [...TOOLS, makeRememberTool(opts)];
   if (opts.client) {
@@ -139,6 +144,14 @@ export function buildTools(opts: BuildToolsOptions): Tool[] {
         ...(opts.checkPermission !== undefined ? { checkPermission: opts.checkPermission } : {}),
       }),
     );
+  }
+  // V5 决策 A4：plan 导航工具追加在后（仅交互 REPL）
+  if (opts.planMode) {
+    tools.push(...opts.planMode.tools);
+  }
+  // V5 决策 B3：mcp_connect 追加在最后（MCP server 配置存在才装配）
+  if (opts.mcpConnect) {
+    tools.push(opts.mcpConnect);
   }
   return tools;
 }

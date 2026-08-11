@@ -69,6 +69,21 @@ describe("CLI 冒烟（先 npm run build）", () => {
     expect(stderr).toContain("invalid");
   });
 
+  it("--mode plan → commander choices 报非法值并退出 1（V5 决策 A1：plan 不是 CLI 可选项）", async () => {
+    let code = 0;
+    let stderr = "";
+    try {
+      await run(process.execPath, [distCli, "--mode", "plan", "hi"], { env: sandboxEnv() });
+    } catch (e) {
+      const err = e as { code?: number; stderr?: string };
+      code = err.code ?? 1;
+      stderr = err.stderr ?? "";
+    }
+    expect(code).toBe(1);
+    expect(stderr).toContain("plan");
+    expect(stderr).toContain("invalid");
+  });
+
   it("--dangerously-skip-permissions 已删除 → 未知选项报错", async () => {
     let code = 0;
     let stderr = "";

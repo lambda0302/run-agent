@@ -2,6 +2,38 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.5.0] - 2026-08-11
+
+### Added
+
+- **Plan 模式**（V5 决策 A）：`PermissionMode` 新增 `"plan"`（会话内动态模式，非 CLI 可选项）。
+  `enter_plan_mode` 进入强制只读态——写/执行/verify/remember/MCP 非只读工具一律 deny，只读工具
+  （cwd 内）放行；`exit_plan_mode` 把计划直写 `.run-agent/plans/plan-<ts>.md` 并经 REPL `y/n` 弹窗
+  审批，批准后恢复进入前的权限模式（`prePlanMode`）。`/plan` 手动兜底入口（不经模型判断），
+  两条进入路径共用同一状态机。one-shot 不装配 plan 工具、无 `/plan`（无审批弹窗，防死锁）。
+  详见 [docs/plan-mode.md](docs/plan-mode.md)。
+- **MCP 客户端**（V5 决策 B）：接入标准协议生态。唯一新依赖 `@modelcontextprotocol/sdk`，
+  支持 stdio / Streamable HTTP / SSE 三种传输；配置用户级 `~/.config/run-agent/mcp.json` +
+  项目级 `.run-agent/mcp.json`（仅 Trust 加载）。**按需连接**：默认不预连，`mcp_connect <server>`
+  连接 → `tools/list` → 包装成标准 `Tool`（名 `mcp__<server>__<tool>`、desc 截断 2048、懒 schema
+  `{type:"object"}`、`isConcurrencySafe = readOnlyHint`）进池；连接状态机 4 态
+  connected / failed / needs-auth / disabled；`/mcp` 列状态、`/mcp connect <name>` 手动重连。
+  MCP 工具走**同一权限管线**（新增 `readOnlyNames` 参数，缺省语义不变）。详见
+  [docs/mcp.md](docs/mcp.md) 与 [examples/mcp-server/](examples/mcp-server/)。
+- **StreamingToolExecutor 并发强化**（V5 决策 C）：`src/core/execute.ts` 演进——tool_use block
+  一完整就 `addTool` 入队执行（不再等响应完结），只读并行（上限 10）/ 写串行且不打断，流结束
+  统一 `getResults` 按 index 重排回填；transient 错误/反应式压缩路径先 drain 已启动的工具再重试。
+  对外契约（结果顺序 / 错误文本 / 并发上限）不变，原并发用例全量回归锁定。
+
+### Changed
+
+- 权限引擎 `hasPermissionsToUseTool` 新增第 7 参 `readOnlyNames`（缺省 = 内置只读 ∪ explore，
+  语义不变）；plan 分支插入统一判定顺序（plan 下 enter_plan_mode 放行、只读 cwd 内放行 /
+  cwd 外 ask、其余 deny）。
+- 内置工具 10 → 12：新增 `enter_plan_mode` / `exit_plan_mode`；`mcp_connect` 在配置了 MCP server
+  时装配（第 13 个）；MCP 工具动态追加在最后、内置优先不覆盖。
+- REPL 新增斜杠命令：`/plan`（进入只读计划模式）、`/mcp`、`/mcp connect <name>`。
+
 ## [0.4.3] - 2026-08-11
 
 ### Fixed

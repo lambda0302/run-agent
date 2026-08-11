@@ -2,7 +2,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { LLMClient, LLMMessage, StreamEvent, StreamOptions, ToolSpec } from "../../src/providers/types.js";
+import type {
+  LLMClient,
+  LLMMessage,
+  StreamEvent,
+  StreamOptions,
+  ToolSpec,
+} from "../../src/providers/types.js";
 import { makeExploreTool } from "../../src/tools/explore.js";
 
 let dirs: string[] = [];
@@ -26,9 +32,10 @@ interface StreamCall {
 }
 
 /** 假 client：记录每次 stream 的入参，按脚本逐事件回放。 */
-function fakeClient(
-  script: (call: StreamCall) => StreamEvent[],
-): { client: LLMClient; calls: StreamCall[] } {
+function fakeClient(script: (call: StreamCall) => StreamEvent[]): {
+  client: LLMClient;
+  calls: StreamCall[];
+} {
   const calls: StreamCall[] = [];
   const client: LLMClient = {
     provider: "fake",
@@ -119,11 +126,7 @@ describe("explore（只读子 agent）", () => {
           { type: "done", stopReason: "end_turn" },
         ];
       }
-      return [
-        { type: "text", text: "x" },
-        ev,
-        { type: "done", stopReason: "tool_use" },
-      ];
+      return [{ type: "text", text: "x" }, ev, { type: "done", stopReason: "tool_use" }];
     });
     const tool = makeExploreTool({ client, contextWindow: 300 });
     const r = await tool.call({ prompt: "p" });

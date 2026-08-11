@@ -55,7 +55,11 @@ run-agent 是**零运行时依赖**的纯 Node CLI，且 **stdin 由 REPL 的 re
 ### 2.1 `src/ui/keypress.ts` — 键位解析（纯函数，可单测）
 
 ```ts
-export interface KeyEvent { name: "up" | "down" | "enter" | "escape" | "char"; char?: string; ctrl?: boolean }
+export interface KeyEvent {
+  name: "up" | "down" | "enter" | "escape" | "char";
+  char?: string;
+  ctrl?: boolean;
+}
 export function parseKeypress(chunk: Buffer): KeyEvent[] | null;
 ```
 
@@ -65,14 +69,20 @@ export function parseKeypress(chunk: Buffer): KeyEvent[] | null;
 ### 2.2 `src/ui/select.ts` — `promptSelect<T>`（通用方向键菜单）
 
 ```ts
-export interface SelectOption<T> { label: string; value: T; description?: string; disabled?: boolean }
+export interface SelectOption<T> {
+  label: string;
+  value: T;
+  description?: string;
+  disabled?: boolean;
+}
 export async function promptSelect<T>(
   options: SelectOption<T>[],
   opts?: { out?: NodeJS.WritableStream; initial?: number },
-): Promise<T | undefined>;   // undefined = Escape 取消
+): Promise<T | undefined>; // undefined = Escape 取消
 ```
 
 **实现要点**：
+
 1. 进入前：`rl.pause()`，`process.stdin.setRawMode(true)`，挂一次性 `data` 监听；结束恢复 `setRawMode(false)` + `rl.resume()`。
 2. **重绘策略**：先打印全部选项，每次按键用 ANSI `\x1b[A`（上移一行）+ `\x1b[2K`（清行）只重画焦点行——选项数 ≤4 时开销可忽略，且不依赖终端宽度。
 3. 焦点移动逻辑做成**纯函数** `nextFocus(index, delta, options): number`（越界回绕、跳过 disabled）——照抄 CC 的 reducer 语义，单测锁定。
@@ -109,6 +119,7 @@ export async function promptSelect<T>(
 **建议本次做**：`keypress.ts` + `select.ts` + `resolveAsk`/`askTrustProject` 接入 + 单测。改动集中在 `src/ui/` 与 `prompt.ts`，不影响 `core/` 与 `engine.ts`，风险可控。
 
 **不做**（留给后续版本）：
+
 - 全 REPL 进入 raw mode + 自绘行编辑器（改动面大，需要重写 line 处理）。
 - Ink/React 类完整渲染层（与零依赖原则冲突）。
 - 多选、模糊搜索、数字快捷键——等菜单稳定后按需扩展。

@@ -32,10 +32,47 @@ const IGNORED_SEGMENTS = new Set([
 
 /** 二进制/锁定文件扩展名：第一遍即排除，避免污染 top-N。 */
 const BINARY_EXTENSIONS = new Set([
-  "png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg",
-  "pdf", "zip", "gz", "tgz", "tar", "rar", "7z", "woff", "woff2", "ttf", "eot", "otf",
-  "mp3", "mp4", "mkv", "avi", "mov", "wav", "wasm", "dll", "exe", "so", "dylib",
-  "o", "a", "obj", "class", "jar", "pyc", "pyo", "pyd", "lock", "map",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "ico",
+  "svg",
+  "pdf",
+  "zip",
+  "gz",
+  "tgz",
+  "tar",
+  "rar",
+  "7z",
+  "woff",
+  "woff2",
+  "ttf",
+  "eot",
+  "otf",
+  "mp3",
+  "mp4",
+  "mkv",
+  "avi",
+  "mov",
+  "wav",
+  "wasm",
+  "dll",
+  "exe",
+  "so",
+  "dylib",
+  "o",
+  "a",
+  "obj",
+  "class",
+  "jar",
+  "pyc",
+  "pyo",
+  "pyd",
+  "lock",
+  "map",
 ]);
 
 /** 按语言匹配顶层声明行的轻量正则（per-extension，不用 tree-sitter）。 */
@@ -47,8 +84,14 @@ const SYMBOL_PATTERNS: Record<string, RegExp> = {
 };
 
 const EXT_LANG: Record<string, string> = {
-  ".ts": "ts", ".tsx": "ts", ".mts": "ts", ".cts": "ts",
-  ".js": "js", ".jsx": "js", ".mjs": "js", ".cjs": "js",
+  ".ts": "ts",
+  ".tsx": "ts",
+  ".mts": "ts",
+  ".cts": "ts",
+  ".js": "js",
+  ".jsx": "js",
+  ".mjs": "js",
+  ".cjs": "js",
   ".py": "py",
   ".go": "go",
 };
@@ -170,7 +213,8 @@ export async function listGitFiles(cwd: string): Promise<GitFilesResult> {
   const res = await runGit(cwd, ["ls-files"]);
   if (!res.ok) {
     if (res.code === "ENOENT") return { status: "unavailable", reason: "git 不在 PATH" };
-    if (res.killed) return { status: "unavailable", reason: `git ls-files 超时（${GIT_TIMEOUT_MS}ms）` };
+    if (res.killed)
+      return { status: "unavailable", reason: `git ls-files 超时（${GIT_TIMEOUT_MS}ms）` };
     if (res.code === 128 || /not a git repository/i.test(res.message ?? "")) {
       return { status: "not-git" };
     }
@@ -275,10 +319,7 @@ export async function buildRepoMap(query: string, maxBytes?: number): Promise<st
 }
 
 const schema = z.object({
-  query: z
-    .string()
-    .min(1)
-    .describe("Symbol or filename keyword to locate in the repository"),
+  query: z.string().min(1).describe("Symbol or filename keyword to locate in the repository"),
   maxBytes: z
     .number()
     .int()
