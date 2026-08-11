@@ -41,14 +41,16 @@ describe("toolchain 识别（eslint > tsconfig > scripts.test）", () => {
     const dir = tempDir();
     write(dir, "eslint.config.js", "export default [];\n");
     write(dir, "tsconfig.json", "{}\n");
-    const abs = write(dir, "src/a.ts", "const x = 1;\n");
+    write(dir, "src/a.ts", "const x = 1;\n");
     process.chdir(dir);
     const log: string[] = [];
     const tool = makeTool(log);
     const r = await tool.call({ file: "src/a.ts" });
     expect(log[0]).toContain("npx eslint");
-    // {file} 占位符被 JSON.stringify 的绝对路径替换（含引号、转义反斜杠）
-    expect(log[0]).toContain(JSON.stringify(abs));
+    // {file} 占位符被 JSON.stringify 的绝对路径替换（含引号、转义反斜杠）。
+    // macOS 上 TMPDIR=/var 是到 /private/var 的符号链接：mkdtempSync 返回未解析路径，
+    // 而 process.cwd() 返回解析后路径——从 process.cwd() 反推期望值，与 verify.ts 同源。
+    expect(log[0]).toContain(JSON.stringify(path.resolve(process.cwd(), "src/a.ts")));
     expect(r.result).toContain("mock 错误输出");
   });
 
@@ -96,7 +98,8 @@ describe("command 覆盖与白名单", () => {
     const r = await tool.call({ file: "a.ts", command: "npx tsc --noEmit {file}" });
     expect(r.result).toContain("npx tsc");
     expect(log[0]).toContain("npx tsc");
-    expect(log[0]).toContain(JSON.stringify(path.join(dir, "a.ts")));
+    // 同上：期望值从 process.cwd() 反推，规避 macOS /var→/private/var 符号链接差异
+    expect(log[0]).toContain(JSON.stringify(path.resolve(process.cwd(), "a.ts")));
   });
 
   it("拒绝危险/风险/任意命令（rm -rf、git push --force、echo 等）", async () => {
