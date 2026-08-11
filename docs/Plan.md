@@ -156,7 +156,7 @@ V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+
 - 首批测试：agent loop 单测、Edit 工具单测、OpenAI 兼容适配器集成测试（mock 服务）。
 - CHANGELOG 建立；打 tag `v0.1.0`。
 
-**验收**：`npm install -g run-agent` 后，一个从未见过本项目的用户按 README 能在 5 分钟内用它改一个文件；三种模型来源（Anthropic / DeepSeek / Ollama）都能跑通；三 OS CI 绿。
+**验收**：`npm install -g @liyiyong/run-agent` 后，一个从未见过本项目的用户按 README 能在 5 分钟内用它改一个文件；三种模型来源（Anthropic / DeepSeek / Ollama）都能跑通；三 OS CI 绿。
 
 ---
 

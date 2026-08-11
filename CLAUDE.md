@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概览
 
-`run-agent` — 多提供商的终端编码 agent（npm 包 / CLI 命令都是 `run-agent`）。持续演进中：ReAct agent loop + 6 个内置工具 + 配置系统 + JSONL 会话持久化 + readline REPL + 权限引擎 + 工具并发 + Trust。路线图见 `docs/Plan.md`，各版本计划与 Bug 记录见 `docs/Plan_V*.md` / `docs/Bug_V*.md`。**本文件只记稳定约定；架构细节以 `src/` 为准，勿当成版本快照。**
+`run-agent` — 多提供商的终端编码 agent（npm 包名 `@liyiyong/run-agent`，CLI 命令 `run-agent`）。持续演进中：ReAct agent loop + 6 个内置工具 + 配置系统 + JSONL 会话持久化 + readline REPL + 权限引擎 + 工具并发 + Trust。路线图见 `docs/Plan.md`，各版本计划与 Bug 记录见 `docs/Plan_V*.md` / `docs/Bug_V*.md`。**本文件只记稳定约定；架构细节以 `src/` 为准，勿当成版本快照。**
 
 ## 常用命令
 

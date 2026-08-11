@@ -1,5 +1,5 @@
 {
-  "name": "run-agent",
+  "name": "@liyiyong/run-agent",
   "version": "0.2.0",
   "description": "A transparent, multi-provider coding agent for your terminal.",
   "type": "module",

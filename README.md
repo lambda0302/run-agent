@@ -10,7 +10,7 @@
 
 ```bash
 # 全局安装
-npm install -g run-agent
+npm install -g @liyiyong/run-agent
 
 # 设置模型 API key（以 Anthropic 为例）
 export ANTHROPIC_API_KEY=sk-ant-...

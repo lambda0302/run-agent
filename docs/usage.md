@@ -5,7 +5,7 @@
 ## 安装
 
 ```bash
-npm install -g run-agent
+npm install -g @liyiyong/run-agent
 ```
 
 需要 Node ≥ 20。
