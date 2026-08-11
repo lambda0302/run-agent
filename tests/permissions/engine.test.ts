@@ -126,6 +126,41 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     );
   });
 
+  it("内置 deny：run_bash 命令引用 `.run-agent` 段 → deny（记忆目录对 agent 只读）", () => {
+    const denyCmds = [
+      "cat .run-agent/CLAUDE.md",
+      "Get-Content .run-agent\\CLAUDE.md",
+      "cd ./.run-agent",
+      'cat "$HOME/.run-agent/permissions.json"',
+      "type C:\\proj\\.run-agent\\config",
+      "Set-Content .run-agent\\CLAUDE.md 'x'",
+    ];
+    for (const c of denyCmds) {
+      expect(hasPermissionsToUseTool("run_bash", { command: c }, "default", RULES), c).toBe("deny");
+    }
+    // acceptEdits 下同样收口（deniedByDefault 先于模式兜底）
+    expect(
+      hasPermissionsToUseTool("run_bash", { command: "cat .run-agent/x" }, "acceptEdits", RULES),
+    ).toBe("deny");
+  });
+
+  it("内置 deny：.run-agent 收口不误伤正常命令 / 相似目录名", () => {
+    const allowOrAsk = [
+      "ls -la",
+      "git log --oneline",
+      'grep -rn "run-agent" src',
+      "echo hi",
+      "ls .run-agent-backup", // 后缀不同，非 agent 自身目录
+      "ls .claude", // 只收 .run-agent，不误伤其它点目录
+    ];
+    for (const c of allowOrAsk) {
+      // 非 deny（default 下 run_bash 兜底为 ask）
+      expect(hasPermissionsToUseTool("run_bash", { command: c }, "default", RULES), c).not.toBe(
+        "deny",
+      );
+    }
+  });
+
   it("兜底：default 模式只读工具 allow、bash ask、写/改 ask", () => {
     expect(hasPermissionsToUseTool("read_file", { file_path: "a.ts" }, "default", RULES)).toBe(
       "allow",
@@ -205,5 +240,18 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
       "deny",
     );
     expect(hasPermissionsToUseTool("run_bash", { command: "ls" }, "default", rules)).toBe("deny");
+  });
+
+  it("remember（写入记忆）:无路径字段→不命中内置 deny;default ask / acceptEdits allow / 可被用户规则 deny", () => {
+    const input = { content: "记住 npm test" };
+    // 内置 deny 不适用（input 无 file_path/path/cwd，且非 run_bash）
+    expect(hasPermissionsToUseTool("remember", input, "default", RULES)).toBe("ask");
+    // acceptEdits：写/改类工具免确认
+    expect(hasPermissionsToUseTool("remember", input, "acceptEdits", RULES)).toBe("allow");
+    // bypass：无条件放行
+    expect(hasPermissionsToUseTool("remember", input, "bypass", RULES)).toBe("allow");
+    // 用户规则可 deny
+    const deny: PermissionRule[] = [{ tool: "remember", action: "deny" }];
+    expect(hasPermissionsToUseTool("remember", input, "default", deny)).toBe("deny");
   });
 });

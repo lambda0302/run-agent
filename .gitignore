@@ -19,5 +19,9 @@ Thumbs.db
 .vscode/
 *.swp
 
+# local claude worktrees / agent dirs
+.claude/
+.run-agent/
+
 # test & coverage
 coverage/

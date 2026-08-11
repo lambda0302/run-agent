@@ -2,19 +2,79 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [Unreleased]
-
-### Fixed
-
-- **权限确认多 y 回显 bug**（V2-11）：`resolveAsk` 不再在同一 stdin 上自建 readline，改为
-  **复用 REPL 的唯一 readline**（注入 `ask` 函数）——输入一个 `y` 不再回显成 `yy`/`yyy`，
-  且 `yy`/`yyy` 纯 y 串也判为允许。`checkPermission` 的构造移入 `repl.ts` 的
-  `makeCheckPermission(ctx, out, ask)`。新增 `tests/permissions/prompt.test.ts` 回归锁定。
+## [0.3.2] - 2026-08-11
 
 ### Added
 
-- **REPL 任务完成分隔线**：每轮任务结束输出清晰的 `✔ 任务完成` 标记，明确一轮已结束，
-  消除「任务完成后输入 `y` 被当成新 prompt 又跑一遍」的困惑（后者本身是 REPL 语义）。
+- **`remember` 工具**（写入长期记忆）：把「用户明确要求记住 / 跨会话值得保留」的结论追加进
+  用户级 `~/.config/run-agent/CLAUDE.md`（自动去重、超 32KB 拒绝写入），下次会话即被注入。
+  只写用户级，`.run-agent` 对 agent 保持只读；走权限引擎（default ask / acceptEdits 免确认，
+  可被用户规则 deny）。system prompt 增加记忆写入指引。
+- 测试：remember 工具单测（首写/追加/去重/无换行追加/超限拒绝/空入参）+ 权限决策矩阵
+  （default ask / acceptEdits allow / bypass allow / 用户规则 deny）——共 166 个用例。
+
+### Changed
+
+- 版本号 `0.3.1` → `0.3.2`；内置工具 6 个 → 7 个。
+
+## [0.3.1] - 2026-08-11
+
+### Added
+
+- **反应式压缩**（0.3.1）：模型返回上下文超长错误（Anthropic `type=prompt_too_long` / OpenAI
+  `code=context_length_exceeded` / 消息正则）时，在流式请求的 catch 分支**强制压缩**后重试
+  （`force: true` 忽略估算阈值；每轮至多恢复一次，`reactiveStage` 守卫防死循环）；
+  未配 `contextWindow` 时不做反应式压缩，直接抛原错误。
+- **硬截断兜底**（0.3.1）：强制压缩后仍超长 → `hardTruncateToFit` 反复丢最老消息直到 fit；
+  `normalizeToolPairing` 修复硬截断产生的孤儿 tool 消息（无配对 `tool_use` 的 `tool` 结果、
+  无后续 `tool_result` 的 `tool_use` 块均被清理）；裁不动才抛原错误（有界，不无限循环）。
+- 测试：errors（`isPromptTooLong` 各 provider 形态）、compact（force 压缩 / 硬截断 / 孤儿修复）、
+  query（反应式压缩集成 / 硬截断兜底 / 无窗口直接抛）——共 157 个用例。
+
+### Fixed
+
+- **`.run-agent` 记忆目录对 agent 完全只读**：`run_bash` 命令文本里引用 `.run-agent` 路径段现在同样
+  被内置 deny 收口（此前可经 shell 在用户批准下读/改记忆文件），与 `read_file`/`write_file`/`edit_file`
+  的路径 deny 对齐；只收 `.run-agent`，不误伤 `.git` / `.claude` / 相似目录名。
+
+### Changed
+
+- 版本号 `0.3.0` → `0.3.1`。
+
+## [0.3.0] - 2026-08-11
+
+### Added
+
+- **CLAUDE.md 四级记忆**（V3）：managed → user → project → local 自有路径自动发现并注入 system
+  稳定段；project/local 级仅受信任项目注入（防提示注入）；`--bare` 全禁。
+- **system 动态注入**（V3）：日期 + git 状态（分支/sha/最近 commit/git user/status，并发 execFile +
+  3s TTL + 失败静默），稳定/动态分段保住 prompt cache 前缀。
+- **token 估算 + 上下文自动压缩**（V3）：零依赖启发式（CJK 加权）；`contextWindow` 按 provider
+  映射可配（`--context-window` / `RUN_AGENT_CONTEXT_WINDOW` / config）；超阈值整段摘要 → 单边界消息，
+  已读文件本地重挂，`--resume` 从最后边界续起；REPL `/compact` 手动触发。
+- **超大工具结果指针化**（V3 决策 8）：超 8192 token 的工具结果落盘到 session 同目录，
+  消息列表只留指针，模型需要时自己 `read_file`。
+- **`added` 持久化契约**（V3）：`runQuery` 经 `pushConversation(m)` 统一入队，compact 边界消息也走
+  `added`；REPL / one-shot 改为 `messages = result.messages` + 逐条持久化 `result.added`。
+- CLI 选项：`--bare`、`--context-window <n>`。
+- **REPL 任务完成分隔线**：每轮任务结束输出清晰的 `✔ 任务完成` 标记，明确一轮已结束。
+- 文档：新增 `docs/context-management.md`；`docs/architecture.md` 目录树与扩展点更新。
+- 测试：context（估算/CLAUDE.md/system/git）、compact（阈值/边界/重挂/指针化）、query（主动压缩/
+  递归守卫/指针化）、sessionStorage（边界加载）——共 141 个用例。
+
+### Fixed
+
+- **REPL 跨轮只喂 user 消息**（V1 遗留）：`added` 契约 + 数组替换修复，跨轮历史完整包含
+  assistant/tool 消息。
+- **权限确认多 y 回显 bug**（V2-11）：`resolveAsk` 复用 REPL 唯一 readline（注入 `ask` 函数），
+  输入一个 `y` 不再回显成 `yy`/`yyy`；`checkPermission` 构造移入 `repl.ts` 的
+  `makeCheckPermission(ctx, out, ask)`。
+
+### Changed
+
+- 版本号 `0.2.0` → `0.3.0`。
+- `.prettierignore` / `vitest.config.ts` / eslint 全局 ignore 排除 `.claude/`（本地遗留 worktree
+  不再污染测试与静态检查）。
 
 ## [0.2.0] - 2026-08-11
 

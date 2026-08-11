@@ -69,9 +69,9 @@ run-agent
 export ANTHROPIC_API_KEY=sk-ant-...
 run-agent --provider anthropic --model claude-sonnet-5 "修复这个仓库的测试"
 
-# DeepSeek（OpenAI 兼容）
-export DEEPSEEK_API_KEY=sk-...
-run-agent --provider openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat "给函数加注释"
+# DeepSeek（OpenAI 兼容）——无默认 key 变量，须指明 key 来源
+run-agent --provider openai-compatible --base-url https://api.deepseek.com/v1 --model deepseek-chat --api-key sk-... "给函数加注释"
+# 或配置 apiKeyEnv: "DEEPSEEK_API_KEY" 后 export DEEPSEEK_API_KEY=sk-...（见 README「设置 API key」）
 
 # 本地 Ollama
 ollama pull qwen2.5

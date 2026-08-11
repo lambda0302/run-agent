@@ -1,7 +1,8 @@
 import { Command } from "commander";
 import path from "node:path";
 import pkg from "../../package.json" with { type: "json" };
-import { loadConfig, resolveApiKey } from "../config/index.js";
+import { loadConfig, resolveApiKey, resolveContextWindow } from "../config/index.js";
+import type { SystemContext } from "../core/context.js";
 import { loadDotEnv } from "../config/load.js";
 import { askTrustProject } from "../permissions/prompt.js";
 import {
@@ -39,6 +40,8 @@ program
   .option("-M, --mode <mode>", `permission mode: ${PERMISSION_MODES.join(" | ")} (default)`)
   .option("--dangerously-skip-permissions", "bypass all permission checks (mode=bypass)")
   .option("-t, --trust", "trust the current project directory (skips the Trust prompt)")
+  .option("--bare", "disable CLAUDE.md memory and dynamic context injection")
+  .option("--context-window <n>", "context window size in tokens (defaults per provider)")
   .action(async (prompt: string | undefined, opts: Record<string, unknown>) => {
     try {
       await main(prompt, opts);
@@ -80,6 +83,8 @@ interface CliOpts {
   mode?: string;
   dangerouslySkipPermissions?: boolean;
   trust?: boolean;
+  bare?: boolean;
+  contextWindow?: number;
 }
 
 /** 解析权限模式：--dangerously-skip-permissions > --mode > RUN_AGENT_MODE > config > default */
@@ -97,6 +102,7 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ...(opts.model ? { model: opts.model } : {}),
     ...(opts.baseUrl ? { baseURL: opts.baseUrl } : {}),
     ...(opts.apiKey ? { apiKey: opts.apiKey } : {}),
+    ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}),
   });
 
   if (cfg.provider === "openai-compatible" && !cfg.baseURL) {
@@ -139,6 +145,10 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
 
   const ctx: PermissionContext = { mode, rules, canPrompt, isTrusted };
 
+  // ── V3 上下文：system 组装所需 + 生效的上下文窗口 ────────────────
+  const systemCtx: SystemContext = { cwd, isTrusted, bare: Boolean(opts.bare) };
+  const contextWindow = resolveContextWindow(cfg);
+
   // ── 会话：--resume 读最新会话，否则新建 ─────────────────────────
   let sessionFile: string;
   let initialMessages: LLMMessage[] = [];
@@ -160,6 +170,10 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     sessionFile,
     initialMessages,
     ctx,
+    contextWindow,
+    systemCtx,
+    // 决策 8：超大工具结果落盘到 session 同目录（r0.txt/r1.txt…），消息里只留指针
+    resultsDir: path.dirname(sessionFile),
   };
 
   if (prompt) {

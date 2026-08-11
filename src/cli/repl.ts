@@ -1,4 +1,7 @@
 import * as readline from "node:readline";
+import { COMPACT_MIN_MESSAGES, maybeAutoCompact } from "../core/compact.js";
+import { buildSystemPrompt } from "../core/context.js";
+import type { SystemContext } from "../core/context.js";
 import { runQuery } from "../core/query.js";
 import { hasPermissionsToUseTool, inputPath } from "../permissions/engine.js";
 import { resolveAsk } from "../permissions/prompt.js";
@@ -19,6 +22,14 @@ export interface AgentOptions {
   ctx?: PermissionContext;
   /** 流式 transient 错误重试次数 */
   maxRetries?: number;
+  /** V3 system 组装所需上下文；缺省不注入 system */
+  systemCtx?: SystemContext;
+  /** V3 上下文窗口（token 估算）；设了才启用自动压缩 */
+  contextWindow?: number;
+  /** V3 压缩发生时回调（REPL 用于提示） */
+  onCompact?: () => void;
+  /** V3 决策 8：超大工具结果落盘目录 */
+  resultsDir?: string;
 }
 
 const DIM = "\x1b[90m";
@@ -72,6 +83,20 @@ export function makeCheckPermission(
   };
 }
 
+/** 组装 runQuery 的公共选项（system/contextWindow/onCompact/...）。 */
+function queryOpts(opts: AgentOptions, system: string | undefined) {
+  return {
+    client: opts.client,
+    tools: opts.tools,
+    ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+    ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+    ...(system ? { system } : {}),
+    ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}),
+    ...(opts.onCompact ? { onCompact: opts.onCompact } : {}),
+    ...(opts.resultsDir ? { resultsDir: opts.resultsDir } : {}),
+  };
+}
+
 /** 单次执行：读 prompt → 工具循环 → 返回最终回复文本。 */
 export async function runOneShot(opts: AgentOptions, prompt: string): Promise<string> {
   const out = opts.out ?? process.stdout;
@@ -79,19 +104,17 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<st
   messages.push({ role: "user", content: prompt });
   await appendMessage(opts.sessionFile, messages[messages.length - 1]!);
 
+  const system = opts.systemCtx ? await buildSystemPrompt(opts.systemCtx) : undefined;
   const checkPermission = opts.ctx ? makeCheckPermission(opts.ctx, out) : undefined;
-  const before = messages.length;
   const result = await runQuery(messages, {
-    client: opts.client,
-    tools: opts.tools,
-    ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+    ...queryOpts(opts, system),
     ...(checkPermission ? { checkPermission } : {}),
-    ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
     ...createHandlers(out),
   });
   out.write("\n");
 
-  for (const m of result.messages.slice(before)) {
+  // added 契约：只持久化本轮回调新增的消息
+  for (const m of result.added) {
     await appendMessage(opts.sessionFile, m);
   }
   return result.reply;
@@ -99,13 +122,13 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<st
 
 const HELP = [
   "run-agent REPL — 直接输入 prompt 开始，agent 会读/写/改/搜/执行并汇报。",
-  "  命令: /clear 清空上下文 · /help 帮助 · /exit 退出",
+  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /help 帮助 · /exit 退出",
 ].join("\n");
 
 /** 交互式 REPL 主循环。 */
 export async function runRepl(opts: AgentOptions): Promise<void> {
   const out = opts.out ?? process.stdout;
-  const messages: LLMMessage[] = [...(opts.initialMessages ?? [])];
+  let messages: LLMMessage[] = [...(opts.initialMessages ?? [])];
   const terminal = Boolean(process.stdin.isTTY);
 
   const rl = readline.createInterface({
@@ -151,6 +174,33 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
           messages.length = 0;
           out.write("已清空上下文\n");
           break;
+        case "/compact": {
+          if (!opts.contextWindow) {
+            out.write("未配置 contextWindow（--context-window <n> 或 config），无法压缩\n");
+            break;
+          }
+          if (messages.length < COMPACT_MIN_MESSAGES) {
+            out.write("历史过短，无需压缩\n");
+            break;
+          }
+          // 手动触发主动压缩：整段摘要 → 单边界消息 → 持久化边界
+          const system = opts.systemCtx ? await buildSystemPrompt(opts.systemCtx) : undefined;
+          const res = await maybeAutoCompact(messages, {
+            client: opts.client,
+            tools: opts.tools,
+            ...(system !== undefined ? { system } : {}),
+            contextWindow: opts.contextWindow,
+          });
+          if (!res.compacted) {
+            out.write("上下文未超阈值，无需压缩\n");
+            break;
+          }
+          messages = res.messages;
+          await appendMessage(opts.sessionFile, res.messages[0]!);
+          opts.onCompact?.();
+          out.write("已压缩上下文（边界消息已持久化，--resume 将从摘要续起）\n");
+          break;
+        }
         case "/help":
           out.write(`${HELP}\n`);
           break;
@@ -164,18 +214,18 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
     messages.push({ role: "user", content: input });
     await appendMessage(opts.sessionFile, messages[messages.length - 1]!);
 
-    const before = messages.length;
+    // 每轮重建 system（日期/git 动态部分刷新；git 有 3s TTL 缓存）
+    const system = opts.systemCtx ? await buildSystemPrompt(opts.systemCtx) : undefined;
     const result = await runQuery(messages, {
-      client: opts.client,
-      tools: opts.tools,
-      ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
+      ...queryOpts(opts, system),
       ...(checkPermission ? { checkPermission } : {}),
-      ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
       ...handlers,
     });
     out.write("\n");
 
-    for (const m of result.messages.slice(before)) {
+    // added 契约 + 数组替换：compact 可能重建消息数组，slice 已不可靠
+    messages = result.messages;
+    for (const m of result.added) {
       await appendMessage(opts.sessionFile, m);
     }
     // 清晰的任务完成分隔线：明确一轮已结束，避免“任务完成后输入 y 被当成新 prompt 又跑一遍”

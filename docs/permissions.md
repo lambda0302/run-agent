@@ -29,7 +29,8 @@ V2 引入：**权限审批引擎**、**只读并行/写串行**、**Trust 信任
 
 - 危险命令：`rm -rf /`、`rm -rf ~`、`sudo rm -rf …`、`mkfs`/`fdisk`/`mkswap`、
   `dd … of=/dev|/etc|/var`、`git push --force`、`npm|pnpm|yarn publish|prune`、`shutdown` 等。
-- 敏感路径：路径含 `.git` / `.claude` / `.run-agent` 段。
+- 敏感路径：路径含 `.git` / `.claude` / `.run-agent` 段；`run_bash` 命令文本里引用 `.run-agent`
+  段同样收口（agent 的记忆目录对模型完全只读）。
 
 `run_bash` 的命令还会按风险分级：`dangerous` → 直接拒绝；`risky`（如 `rm -rf ./dist`、
 `sudo …`、`curl … | sh`、`> /etc/…`、`git reset --hard`、`git checkout .`）→ 需要确认；

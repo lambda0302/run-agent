@@ -19,7 +19,7 @@
 以下操作在任何模式下（`bypass` 除外）一律拒绝，即使用户规则写了 allow：
 
 - **危险 shell 命令**：`rm -rf /` / `rm -rf ~`（根删除）、`sudo rm -rf …`、格式化类（`mkfs`/`fdisk`/`mkswap`）、`dd` 写入裸设备或系统路径、`git push --force`、`npm/pnpm/yarn publish|prune`、`shutdown`/`reboot`/`halt`/`poweroff`。
-- **敏感路径**：任何规范化后含 `.git`、`.claude`、`.run-agent` 路径段的文件操作（仓库元数据与 agent 自身目录）。
+- **敏感路径**：任何规范化后含 `.git`、`.claude`、`.run-agent` 路径段的文件操作（仓库元数据与 agent 自身目录）；`run_bash` 命令里引用 `.run-agent` 段同样拒绝——agent 的记忆目录对模型完全只读。
 
 ## 信任边界（Trust，防提示注入）
 

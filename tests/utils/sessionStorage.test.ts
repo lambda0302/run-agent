@@ -3,6 +3,7 @@ import { appendFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { COMPACT_MARKER } from "../../src/core/compact.js";
 import type { LLMMessage } from "../../src/providers/types.js";
 import {
   appendMessage,
@@ -58,5 +59,32 @@ describe("sessionStorage（JSONL 会话）", () => {
     await appendFile(file, "{bad json}\n", "utf8");
     await appendMessage(file, { role: "user", content: "ok" });
     expect(await loadSession(file)).toEqual([{ role: "user", content: "ok" }]);
+  });
+
+  it("遇到压缩边界：只从含哨兵的边界消息续起（更早历史被忽略）", async () => {
+    const dir = tempDir();
+    const file = await createSessionFile(dir);
+    const boundary: LLMMessage = {
+      role: "user",
+      content: `[上下文已压缩] ${COMPACT_MARKER}\n摘要`,
+    };
+    await appendMessage(file, { role: "user", content: "旧消息1" });
+    await appendMessage(file, { role: "assistant", content: "旧回复" });
+    await appendMessage(file, boundary);
+    await appendMessage(file, { role: "user", content: "新消息" });
+    expect(await loadSession(file)).toEqual([boundary, { role: "user", content: "新消息" }]);
+  });
+
+  it("多边界：取最后一个边界续起", async () => {
+    const dir = tempDir();
+    const file = await createSessionFile(dir);
+    const b1: LLMMessage = { role: "user", content: `[上下文已压缩] ${COMPACT_MARKER}\n摘要1` };
+    const b2: LLMMessage = { role: "user", content: `[上下文已压缩] ${COMPACT_MARKER}\n摘要2` };
+    await appendMessage(file, { role: "user", content: "a" });
+    await appendMessage(file, b1);
+    await appendMessage(file, { role: "user", content: "b" });
+    await appendMessage(file, b2);
+    await appendMessage(file, { role: "user", content: "c" });
+    expect(await loadSession(file)).toEqual([b2, { role: "user", content: "c" }]);
   });
 });

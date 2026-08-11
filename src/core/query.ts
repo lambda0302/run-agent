@@ -8,6 +8,15 @@ import type {
 import { toToolSpecs } from "../tools.js";
 import type { Tool } from "../tools.js";
 import type { Decision } from "../permissions/types.js";
+import { isPromptTooLong } from "../utils/errors.js";
+import {
+  COMPACT_MIN_MESSAGES,
+  computeCompactThreshold,
+  hardTruncateToFit,
+  maybeAutoCompact,
+  normalizeToolPairing,
+  spillOversizedResult,
+} from "./compact.js";
 import { executeToolCalls } from "./execute.js";
 
 export interface RunQueryOptions {
@@ -26,14 +35,28 @@ export interface RunQueryOptions {
   checkPermission?: (tool: Tool, input: unknown) => Promise<Decision>;
   /** 流式请求的 transient 错误重试次数，默认 2（可用 RUN_AGENT_MAX_RETRIES 覆盖） */
   maxRetries?: number;
+  /** V3 system prompt：首条 system 消息进请求、不进返回/持久化 */
+  system?: string;
+  /** V3 上下文窗口（token 估算）；设了才启用自动压缩 */
+  contextWindow?: number;
+  /** V3 压缩发生时回调（REPL 用于提示） */
+  onCompact?: () => void;
+  /** 标记本请求来源（compact 摘要请求走 'compact'，跳过主动压缩防递归） */
+  querySource?: string;
+  /** V3 决策 8：超大工具结果落盘目录（缺省不落盘，结果原样进消息列表） */
+  resultsDir?: string;
 }
 
 export interface RunQueryResult {
   /** 完整对话（含最后的 assistant 回复），供持久化/续接 */
   messages: LLMMessage[];
+  /** 本轮回调期间新增的消息（与 messages 尾部一致，REPL 用它逐条持久化） */
+  added: LLMMessage[];
   /** 最终回复文本（最后一轮 model 的 text 增量拼接） */
   reply: string;
   iterations: number;
+  /** 本轮回调期间触发的压缩次数 */
+  compacts: number;
 }
 
 const DEFAULT_MAX_ITERATIONS = 25;
@@ -61,27 +84,66 @@ export async function runQuery(
   initial: LLMMessage[],
   opts: RunQueryOptions,
 ): Promise<RunQueryResult> {
-  const messages: LLMMessage[] = [...initial];
+  // system 只进请求，不污染持久化/返回的对话
+  const messages: LLMMessage[] = initial.filter((m) => m.role !== "system");
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   const envRetries = Number(process.env.RUN_AGENT_MAX_RETRIES);
   const maxRetries =
     opts.maxRetries ??
     (Number.isFinite(envRetries) && envRetries >= 0 ? Math.floor(envRetries) : DEFAULT_MAX_RETRIES);
+  const toolSpecs = toToolSpecs(opts.tools);
+  const added: LLMMessage[] = [];
+  let compacts = 0;
+  let spillSeq = 0;
   let iterations = 0;
   let reply = "";
 
+  // 统一入队：同时进 messages 与 added（REPL 用 added 逐条持久化）
+  const pushConversation = (m: LLMMessage): void => {
+    messages.push(m);
+    added.push(m);
+  };
+
   while (iterations < maxIterations) {
     iterations++;
+
+    // 主动压缩：整段历史（含最新 user 请求）估算超阈值 → 摘要 → 单边界消息。
+    // compact 摘要请求自身（querySource='compact'）跳过，防递归。
+    if (
+      opts.contextWindow &&
+      opts.querySource !== "compact" &&
+      messages.length >= COMPACT_MIN_MESSAGES
+    ) {
+      const compactResult = await maybeAutoCompact(messages, {
+        client: opts.client,
+        tools: opts.tools,
+        ...(opts.system !== undefined ? { system: opts.system } : {}),
+        contextWindow: opts.contextWindow,
+      });
+      if (compactResult.compacted) {
+        compacts++;
+        messages.length = 0;
+        messages.push(...compactResult.messages);
+        added.push(...compactResult.messages); // 边界消息也走 added 契约，供 REPL 持久化
+        opts.onCompact?.();
+      }
+    }
 
     // 流式请求：transient 错误（429/5xx/网络）指数退避重试；重试会丢弃已收集的增量重来一整轮
     let textParts: string[] = [];
     let toolUses: ToolUseBlock[] = [];
     let stopReason: StopReason = "end_turn";
     let attempt = 0;
+    // 0.3.1 反应式压缩阶段：0=未反应；1=已强制压缩；2=已硬截断（再超长则抛原错误）
+    let reactiveStage = 0;
     for (;;) {
       try {
-        for await (const ev of opts.client.stream(messages, {
-          tools: toToolSpecs(opts.tools),
+        // system 拼到请求消息数组首条（不进 messages，适配器已会抽顶层/内联）
+        const requestMessages: LLMMessage[] = opts.system
+          ? [{ role: "system", content: opts.system }, ...messages]
+          : messages;
+        for await (const ev of opts.client.stream(requestMessages, {
+          tools: toolSpecs,
           ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
         })) {
           if (ev.type === "text") {
@@ -95,6 +157,42 @@ export async function runQuery(
         }
         break;
       } catch (e) {
+        // 0.3.1 反应式压缩：模型报上下文超长 → 强制压缩/硬截断后重试（每轮至多一次，防死循环）
+        if (isPromptTooLong(e)) {
+          if (!opts.contextWindow || reactiveStage >= 2) throw e;
+          if (reactiveStage === 0) {
+            const c = await maybeAutoCompact(messages, {
+              client: opts.client,
+              tools: opts.tools,
+              ...(opts.system !== undefined ? { system: opts.system } : {}),
+              contextWindow: opts.contextWindow,
+              force: true, // 模型已经说不下了，忽略估算阈值
+            });
+            if (c.compacted) {
+              reactiveStage = 1;
+              compacts++;
+              messages.length = 0;
+              messages.push(...c.messages);
+              added.push(...c.messages);
+              opts.onCompact?.();
+              attempt = 0;
+              textParts = [];
+              toolUses = [];
+              continue;
+            }
+          }
+          // 压缩不可行（消息过少）或压缩后仍超长 → 硬截断 + 修复 tool 配对
+          reactiveStage = 2;
+          const fit = hardTruncateToFit(messages, computeCompactThreshold(opts.contextWindow));
+          const normalized = normalizeToolPairing(fit);
+          if (JSON.stringify(normalized) === JSON.stringify(messages)) throw e; // 裁不动
+          messages.length = 0;
+          messages.push(...normalized);
+          attempt = 0;
+          textParts = [];
+          toolUses = [];
+          continue;
+        }
         if (attempt >= maxRetries || !isTransientError(e)) throw e;
         attempt++;
         textParts = [];
@@ -109,10 +207,10 @@ export async function runQuery(
     const blocks: ContentBlock[] = [];
     if (reply) blocks.push({ type: "text", text: reply });
     for (const t of toolUses) blocks.push(t);
-    messages.push({ role: "assistant", content: blocks.length ? blocks : "" });
+    pushConversation({ role: "assistant", content: blocks.length ? blocks : "" });
 
     if (stopReason === "end_turn") {
-      return { messages, reply, iterations };
+      return { messages, reply, iterations, added, compacts };
     }
 
     if (stopReason === "tool_use") {
@@ -123,20 +221,25 @@ export async function runQuery(
         ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
       });
       for (let i = 0; i < toolUses.length; i++) {
-        messages.push({ role: "tool", tool_use_id: toolUses[i]!.id, content: results[i]! });
+        let content: string = results[i]!;
+        // 决策 8：超大结果落盘换指针（需 resultsDir；缺省原样进消息列表）
+        if (opts.resultsDir) {
+          content = await spillOversizedResult(content, spillSeq++, opts.resultsDir);
+        }
+        pushConversation({ role: "tool", tool_use_id: toolUses[i]!.id, content });
       }
       continue;
     }
 
     if (stopReason === "max_tokens") {
       // V1 无 compact：截断时追加提示继续，让模型把话说完
-      messages.push({ role: "user", content: "[输出被截断，请继续完成当前任务]" });
+      pushConversation({ role: "user", content: "[输出被截断，请继续完成当前任务]" });
       continue;
     }
 
     // stopReason === "error"
-    messages.push({ role: "user", content: "[模型返回错误，请重试]" });
+    pushConversation({ role: "user", content: "[模型返回错误，请重试]" });
   }
 
-  return { messages, reply, iterations };
+  return { messages, reply, iterations, added, compacts };
 }

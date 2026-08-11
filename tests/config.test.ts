@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { loadConfig, resolveApiKey } from "../src/config/index.js";
+import { loadConfig, resolveApiKey, resolveContextWindow } from "../src/config/index.js";
 import { loadDotEnv } from "../src/config/load.js";
 
 const ENV_KEYS = [
@@ -15,6 +15,7 @@ const ENV_KEYS = [
   "OPENAI_API_KEY",
   "DEEPSEEK_API_KEY",
   "RUN_AGENT_MAX_TOKENS",
+  "RUN_AGENT_CONTEXT_WINDOW",
   "MY_TEST_VAR",
   "MY_QUOTED_VAR",
 ];
@@ -75,6 +76,29 @@ describe("loadConfig 优先级", () => {
   it("RUN_AGENT_MAX_TOKENS 解析为数字", () => {
     withEnv("RUN_AGENT_MAX_TOKENS", "4096");
     expect(loadConfig().maxTokens).toBe(4096);
+  });
+
+  it("RUN_AGENT_CONTEXT_WINDOW 解析为数字", () => {
+    withEnv("RUN_AGENT_CONTEXT_WINDOW", "64000");
+    expect(loadConfig().contextWindow).toBe(64000);
+  });
+
+  it("CLI flag 的 contextWindow 优先于 env", () => {
+    withEnv("RUN_AGENT_CONTEXT_WINDOW", "32000");
+    expect(loadConfig({ contextWindow: 16000 }).contextWindow).toBe(16000);
+  });
+});
+
+describe("resolveContextWindow（provider 默认映射）", () => {
+  it("未显式配置时按 provider 返回默认", () => {
+    expect(resolveContextWindow({ provider: "anthropic" })).toBe(200_000);
+    expect(resolveContextWindow({ provider: "openai" })).toBe(128_000);
+    expect(resolveContextWindow({ provider: "openai-compatible" })).toBe(128_000);
+    expect(resolveContextWindow({ provider: "ollama" })).toBe(8192);
+  });
+
+  it("显式配置优先于 provider 默认", () => {
+    expect(resolveContextWindow({ provider: "ollama", contextWindow: 16_384 })).toBe(16_384);
   });
 });
 

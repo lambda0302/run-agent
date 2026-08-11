@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run build        # tsup 打包 → dist/cli.js（单文件 ESM，自带 shebang）
 npm run dev          # tsup --watch
 npm run typecheck    # tsc --noEmit（strict + exactOptionalPropertyTypes）
-npm run test         # 先 build 再 vitest run（15 文件 / 105 用例）
+npm run test         # 先 build 再 vitest run（18 文件 / 157 用例）
 npx vitest run tests/tools/edit.test.ts   # 跑单个测试文件
 npm run lint / npm run lint:fix
 npm run format / npm run format:check     # prettier
@@ -42,7 +42,7 @@ npm run smoke        # 构建后验证 --version / --help
 ## 安全纪律
 
 - **API key 永不进仓库**；`.gitignore` 覆盖 `.env` / `dist/` / `node_modules/`；`apiKeyEnv` 存环境变量名。
-- **内置底线不可被用户规则解除**：`.git` / `.claude` / `.run-agent` 路径段 + 危险命令（`rm -rf /`、`mkfs`、`git push --force`、`npm publish` 等）无条件 deny。
+- **内置底线不可被用户规则解除**：`.git` / `.claude` / `.run-agent` 路径段（`run_bash` 命令里引用 `.run-agent` 同样收口）+ 危险命令（`rm -rf /`、`mkfs`、`git push --force`、`npm publish` 等）无条件 deny。
 - **测试必须 hermetic**：loop 集成测试注入确定性 mock LLM / 本地 mock HTTP server，绝不发真实 API 请求；涉及配置/会话路径的测试要沙箱子进程环境（`USERPROFILE`/`HOME` 指向临时目录）。
 
 ## 测试

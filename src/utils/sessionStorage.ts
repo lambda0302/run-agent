@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { COMPACT_MARKER } from "../core/compact.js";
 import type { LLMMessage } from "../providers/types.js";
 
 /** 会话根目录：~/.local/share/run-agent/sessions（与配置路径同样基于 homedir） */
@@ -33,16 +34,28 @@ export async function appendMessage(file: string, message: LLMMessage): Promise<
   await appendFile(file, JSON.stringify(record) + "\n", "utf8");
 }
 
-/** 读取整个会话（按记录顺序重建消息数组） */
+/**
+ * 读取会话。JSONL 保持追加式，但遇到含压缩哨兵的边界消息时重置加载点：
+ * 只保留该边界消息与其之后的消息（旧历史留在文件但被忽略），实现压缩后 resume 从摘要续起。
+ */
 export async function loadSession(file: string): Promise<LLMMessage[]> {
   const raw = await readFile(file, "utf8");
-  const messages: LLMMessage[] = [];
+  let messages: LLMMessage[] = [];
   for (const line of raw.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const rec = JSON.parse(trimmed) as SessionRecord;
-      if (rec && rec.message) messages.push(rec.message);
+      if (rec && rec.message) {
+        messages.push(rec.message);
+        if (
+          typeof rec.message.content === "string" &&
+          rec.message.content.includes(COMPACT_MARKER)
+        ) {
+          // 边界即新上下文的起点：清掉更早的历史
+          messages = [rec.message];
+        }
+      }
     } catch {
       // 跳过损坏的行，保证 --resume 不会因单行坏数据而失败
     }

@@ -6,6 +6,7 @@ import { editTool } from "./tools/edit.js";
 import { globTool } from "./tools/glob.js";
 import { grepTool } from "./tools/grep.js";
 import { bashTool } from "./tools/bash/index.js";
+import { rememberTool } from "./tools/remember.js";
 
 /** 一次工具调用的返回：result 会回填进对话；artifacts 是落盘副产物路径（如被截断的完整输出）。 */
 export interface ToolCallResult {
@@ -98,7 +99,15 @@ export function toToolSpecs(tools: Tool[]): ToolSpec[] {
 }
 
 /** V1 内置工具注册表 */
-export const TOOLS: Tool[] = [readTool, writeTool, editTool, globTool, grepTool, bashTool];
+export const TOOLS: Tool[] = [
+  readTool,
+  writeTool,
+  editTool,
+  globTool,
+  grepTool,
+  bashTool,
+  rememberTool,
+];
 
 export function getTool(name: string): Tool | undefined {
   return TOOLS.find((t) => t.name === name);

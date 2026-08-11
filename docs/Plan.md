@@ -104,7 +104,7 @@ V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+
 | V1   | ReAct MVP + 多提供商  | 端到端闭环 + 首个公开 release `0.1.0` | **ReAct**                             |
 | V2   | 安全与并发 + Trust    | 权限引擎 + 工具并发 + 安全文档        | **并发（工具层）**                    |
 | V3   | 记忆与上下文          | 不爆上下文、能续跑                    | **记忆管理**                          |
-| V4   | 代码理解              | 大仓库定位准                          | ——                                    |
+| V4   | 代码理解 + 主动记忆   | 大仓库定位准、跨会话记得住            | ——                                    |
 | V5   | Plan + MCP + 并发强化 | 计划先行 + 标准协议 + 并行            | **Plan and Execute + MCP + 并发强化** |
 | V6   | 可编程化              | Hooks/Skills/命令/Headless            | ——                                    |
 | V7   | 多 Agent              | coordinator+specialist 编排           | **multiAgent**                        |
@@ -204,19 +204,23 @@ V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+
 
 ---
 
-### V4 —— 代码理解（2 周，交付 `0.4.0`）
+### V4 —— 代码理解 + 主动记忆（2~3 周，交付 `0.4.0`）
 
-**目标**：大型仓库里"定位要改的文件"更准，而非全局穷举。
+**目标**：大型仓库里"定位要改的文件"更准，跨会话"记得住教训"——定位准 + 学得进。
 
 **核心功能**：
 
 1. **Repo map（可选高价值）**：tree-sitter 提取符号 → 引用 PageRank → 二分塞进 token 预算。可用简单版替代（git 索引 + 符号表）。
 2. **LSP 诊断反馈**：接入 LSP 读 diagnostics，agent 改完自见 lint/编译错误并自修（Cline/OpenCode 核心体验）。
 3. **探索型只读子 agent**：代替主 agent 深读（为 V7 铺路）。
+4. **主动记忆管理**：从"被动读 CLAUDE.md"升级为"agent 自动学习"——
+   - **写入**：任务收尾时把稳定结论（测试命令、文件定位、踩过的坑、关键决策）以结构化条目写进项目记忆文件（零依赖、人类可读，如 `.run-agent/memory/`）；写入走权限管线 + Trust 门控（需用户确认，防提示注入）。
+   - **检索**：启动 / `--resume` 时按关键词 / 最近命中把相关记忆注入 system，而非全量塞（复用 V3 的 compact 摘要与 `collectClaudeFiles` 四级结构）。
+   - **生命周期**：条目可查、可删、可过期（`run-agent memory` 子命令）。
 
-**开源交付物**：`docs/architecture.md`（架构说明）；LSP 接入测试；大仓库 demo 用例。
+**开源交付物**：`docs/architecture.md`（架构说明）；`docs/memory.md`（记忆格式约定 + 检索策略）；LSP 接入测试；记忆写入/检索集成测试；大仓库 demo 用例。
 
-**验收**：10k+ 文件仓库里 1-2 步定位真正要改的文件；改动后能读回 lint 错误。
+**验收**：10k+ 文件仓库里 1-2 步定位真正要改的文件；改动后能读回 lint 错误；**两次会话间，第二次能引用第一次沉淀的结论（如"测试跑法是 npm test"）**。
 
 ---
 
@@ -334,7 +338,7 @@ V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+
 | V1   | 0.1.0  | ReAct MVP + 多提供商 + 配置 + 跨平台 + README/测试 | 陌生用户 5 分钟上手改文件；三种模型来源跑通 |
 | V2   | 0.2.0  | 权限引擎 + Trust + 工具并发 + SECURITY.md          | 危险命令被拦截，只读并行执行                |
 | V3   | 0.3.0  | compact + CLAUDE.md + resume                       | 10+ 轮不爆上下文                            |
-| V4   | 0.4.0  | repo map / LSP / 探索子 agent                      | 大仓库 1-2 步定位文件                       |
+| V4   | 0.4.0  | repo map / LSP / 探索子 agent / 主动记忆           | 大仓库 1-2 步定位文件；跨会话引用教训       |
 | V5   | 0.5.0  | Plan 模式 + MCP + 流式并发                         | 接上 1 个 MCP server                        |
 | V6   | 0.6.0  | Hooks + Skills + 命令 + Headless                   | CI 无头跑通出 JSON                          |
 | V7   | 0.7.0  | 子 agent + coordinator                             | 多 agent 分工完成跨模块任务                 |

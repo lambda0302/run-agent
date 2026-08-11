@@ -9,6 +9,13 @@ import type { Decision, PermissionMode, PermissionRule } from "./types.js";
 /** 内置 deny 路径段（规范化后逐段比较）：版本库元数据与 agent 自身目录一律不可读写。 */
 const DENY_DIR_SEGMENTS = new Set([".git", ".claude", ".run-agent"]);
 
+/**
+ * run_bash 的命令文本里引用 `.run-agent` 段 → 同样收口（agent 自身目录对模型完全只读）。
+ * 只收 `.run-agent`：不收 `.git`（git 命令文本里大量合法出现，如 `git log`、`.gitignore`）、`.claude`。
+ * 前缀约束避免误伤普通文本里的 "run-agent"；后缀排除 `.run-agent-backup` 这类相似目录名。
+ */
+const AGENT_DIR_BASH_RE = /(?<=^|[\s\\/'"`=(;|&])\.run-agent(?![\w-])/;
+
 /** 只读工具：default 模式下免确认。 */
 const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep"]);
 
@@ -115,8 +122,11 @@ function deniedByDefault(tool: string, input: unknown): boolean {
     const segments = p.split(/[\\/]/);
     if (segments.some((s) => DENY_DIR_SEGMENTS.has(s))) return true;
   }
-  if (tool === "run_bash" && classifyBashCommand(bashCommand(input) ?? "") === "dangerous")
-    return true;
+  if (tool === "run_bash") {
+    const cmd = bashCommand(input) ?? "";
+    if (classifyBashCommand(cmd) === "dangerous") return true;
+    if (AGENT_DIR_BASH_RE.test(cmd)) return true; // 引用 agent 自身记忆目录，同样收口
+  }
   return false;
 }
 

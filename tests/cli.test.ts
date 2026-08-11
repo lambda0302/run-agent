@@ -24,9 +24,9 @@ afterEach(() => {
 });
 
 describe("CLI 冒烟（先 npm run build）", () => {
-  it("--version 输出 0.2.0 且退出 0", async () => {
+  it("--version 输出 0.3.2 且退出 0", async () => {
     const { stdout } = await run(process.execPath, [distCli, "--version"]);
-    expect(stdout.trim()).toBe("0.2.0");
+    expect(stdout.trim()).toBe("0.3.2");
   });
 
   it("--help 退出 0 且包含 provider 与 --resume", async () => {
