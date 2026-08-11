@@ -54,6 +54,45 @@ describe("CLI 冒烟（先 npm run build）", () => {
     expect(stderr).toContain("--base-url");
   });
 
+  it("--mode bypass → commander choices 直接报错并退出 1（V4.5 决策 A 删除 bypass）", async () => {
+    let code = 0;
+    let stderr = "";
+    try {
+      await run(process.execPath, [distCli, "--mode", "bypass", "hi"], { env: sandboxEnv() });
+    } catch (e) {
+      const err = e as { code?: number; stderr?: string };
+      code = err.code ?? 1;
+      stderr = err.stderr ?? "";
+    }
+    expect(code).toBe(1);
+    expect(stderr).toContain("bypass");
+    expect(stderr).toContain("invalid");
+  });
+
+  it("--dangerously-skip-permissions 已删除 → 未知选项报错", async () => {
+    let code = 0;
+    let stderr = "";
+    try {
+      await run(process.execPath, [distCli, "--dangerously-skip-permissions", "hi"], {
+        env: sandboxEnv(),
+      });
+    } catch (e) {
+      const err = e as { code?: number; stderr?: string };
+      code = err.code ?? 1;
+      stderr = err.stderr ?? "";
+    }
+    expect(code).toBe(1);
+    expect(stderr).toContain("unknown option");
+  });
+
+  it("env 非法模式（RUN_AGENT_MODE=bypass）→ 警告并回退 default（ollama 非 TTY 无需 key/网络）", async () => {
+    const env = sandboxEnv();
+    env.RUN_AGENT_MODE = "bypass";
+    const { stderr } = await run(process.execPath, [distCli, "--provider", "ollama"], { env });
+    expect(stderr).toContain("未知权限模式");
+    expect(stderr).toContain("default");
+  });
+
   it("memory list 列出索引条目;show 打印全文;rm 删除", async () => {
     const proj = mkdtempSync(join(tmpdir(), "run-agent-proj-"));
     homes.push(proj);

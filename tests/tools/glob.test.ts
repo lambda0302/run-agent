@@ -67,4 +67,25 @@ describe("glob 工具", () => {
     expect(r.result).toContain("a.ts");
     expect(r.result).not.toContain("sub/c.ts");
   });
+
+  it("默认跳过 .run-agent 目录（V4.5 决策 F：上层根遍历不进入 agent 自身目录）", async () => {
+    const dir = makeTree();
+    mkdirSync(path.join(dir, ".run-agent", "memory"), { recursive: true });
+    writeFileSync(path.join(dir, ".run-agent", "memory", "m.ts"), "m");
+    const r = await globTool.call({ pattern: "**/*.ts", path: dir });
+    expect(r.result).toContain("a.ts");
+    expect(r.result).not.toContain(".run-agent");
+    expect(r.result).not.toContain("m.ts");
+  });
+
+  it("显式把根设为 .run-agent/memory 时可读取（专属通道的遍历语义：根自身不参与 ignore）", async () => {
+    const dir = makeTree();
+    mkdirSync(path.join(dir, ".run-agent", "memory"), { recursive: true });
+    writeFileSync(path.join(dir, ".run-agent", "memory", "m.md"), "m");
+    const r = await globTool.call({
+      pattern: "**/*.md",
+      path: path.join(dir, ".run-agent", "memory"),
+    });
+    expect(r.result).toContain("m.md");
+  });
 });

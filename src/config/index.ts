@@ -12,7 +12,7 @@ export interface RunAgentConfig {
   /** 从哪个环境变量读 API key（覆盖默认约定） */
   apiKeyEnv?: string;
   maxTokens?: number;
-  /** V2 权限模式：default | acceptEdits | bypass */
+  /** 权限模式：default | acceptEdits（bypass 已于 0.4.2 删除；旧值回退 default） */
   permissionMode?: string;
   /** V3 上下文窗口（token 估算用）；缺省按 provider 映射 */
   contextWindow?: number;

@@ -7,6 +7,7 @@
  */
 import * as readline from "node:readline";
 import type { Tool } from "../tools.js";
+import { inputPath, pathInCwd } from "./engine.js";
 import { addRule } from "./store.js";
 import type { Decision, PermissionContext } from "./types.js";
 
@@ -46,7 +47,11 @@ export async function resolveAsk(
   }
 
   const desc = describe(input);
-  const question = `\n允许 ${tool.name}${desc ? ` ${desc}` : ""}？ [y=本次允许 / n=拒绝 / a=始终允许] `;
+  // V4.5 决策 B：路径在允许的工作目录之外时提示（唯一合法通道 = 用户 allow 规则）
+  const p = inputPath(input);
+  const outsideCwd = p !== undefined && !pathInCwd(p, ctx.cwd);
+  const note = outsideCwd ? "（该路径在允许的工作目录之外，如需放行请配置 allow 规则）" : "";
+  const question = `\n允许 ${tool.name}${desc ? ` ${desc}` : ""}${note}？ [y=本次允许 / n=拒绝 / a=始终允许] `;
   // 优先用调用方注入的 ask（REPL 复用同一 readline，杜绝双回显）；
   // 缺省时自行建临时 readline（仅测试/其它入口兜底）。
   const answer = ask

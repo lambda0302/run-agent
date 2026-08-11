@@ -5,18 +5,21 @@
 
 ## 权限模式
 
-| 模式                                         | 只读工具 | 写/改工具 | `run_bash` |
-| -------------------------------------------- | -------- | --------- | ---------- |
-| `default`（默认）                            | 免确认   | 询问确认  | 询问确认   |
-| `acceptEdits`                                | 免确认   | 免确认    | 询问确认   |
-| `bypass`（`--dangerously-skip-permissions`） | 全部放行 | 全部放行  | 全部放行   |
+> **bypass 已于 0.4.2 删除**：`--dangerously-skip-permissions` / `--mode bypass` 不再可用；
+> 旧配置里的 `"bypass"` 值回退 `default` 并警告。现在只有两档：
 
-- 模式选择优先级：`--dangerously-skip-permissions` > `--mode` > 环境变量 `RUN_AGENT_MODE` > `config.json` 的 `permissionMode` > `default`。
+| 模式            | 只读工具（cwd 内） | 写/改工具（cwd 内） | `run_bash` |
+| --------------- | ------------------ | ------------------- | ---------- |
+| `default`（默认）| 免确认             | 询问确认            | 询问确认   |
+| `acceptEdits`   | 免确认             | 免确认              | 询问确认   |
+
+- 模式选择优先级：`--mode` > 环境变量 `RUN_AGENT_MODE` > `config.json` 的 `permissionMode` > `default`。
+- **工作目录（cwd）白名单**：路径在 cwd 之外时，**只读工具也询问确认**（越界读取唯一合法通道是用户 allow 规则）；`acceptEdits` 的免确认只作用于 cwd 内。
 - **非交互（one-shot）场景下不会弹确认**，所有"需确认"的操作自动降级为拒绝——绝不挂起、绝不未经确认执行。
 
 ## 内置安全底线（不可被用户规则解除）
 
-以下操作在任何模式下（`bypass` 除外）一律拒绝，即使用户规则写了 allow：
+以下操作在任何模式下一律拒绝，即使用户规则写了 allow：
 
 - **危险 shell 命令**：`rm -rf /` / `rm -rf ~`（根删除）、`sudo rm -rf …`、格式化类（`mkfs`/`fdisk`/`mkswap`）、`dd` 写入裸设备或系统路径、`git push --force`、`npm/pnpm/yarn publish|prune`、`shutdown`/`reboot`/`halt`/`poweroff`。
 - **敏感路径**：任何规范化后含 `.git`、`.claude`、`.run-agent` 路径段的文件操作（仓库元数据与 agent 自身目录）；`run_bash` 命令里引用 `.run-agent` 段同样拒绝——agent 的记忆目录对模型完全只读。

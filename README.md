@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.4.1**（代码理解：`repo_map` 两遍排序定位符号/文件 + `explore` 只读探索子 agent + `verify` 跑 tsc/eslint/test 读回错误自修）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.4.2**（权限模型重构：bypass 删除 + 危险目录黑名单 / 工作目录白名单 / 记忆读专属通道三层模型 + 统一判定顺序）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.4.1
+run-agent --version    # 应输出 0.4.2
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
@@ -300,7 +300,7 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **记忆维护**（0.4.0）：`run-agent memory list/show/rm/prune` 子命令管理项目记忆；`glob`/`grep` 遍历默认忽略 `.run-agent`
 - **代码理解**（0.4.1）：`repo_map` 两遍排序定位符号/文件（git 索引 + 路径打分 + 符号扫描，非 git 仓库降级 readdir）· `explore` 只读探索子 agent（4/8/12 轮，上下文独立）· `verify` 对改动文件跑 tsc/eslint/test 把错误读回自修（命令白名单 + 120s 超时 + 30k 截断）
 - **超大工具结果指针化**（V3）：超阈值结果落盘、消息里只留指针，模型需要时自己 `read_file`
-- **权限审批引擎**（V2）：`default` / `acceptEdits` / `bypass` 三模式，内置危险命令与敏感路径底线，支持全局 + 项目级规则
+- **权限审批引擎**（V2 / 0.4.2）：`default` / `acceptEdits` 两档模式（bypass 已删除），危险目录黑名单 + 工作目录白名单 + 记忆读专属通道三层模型，内置危险命令与敏感路径底线，支持全局 + 项目级规则
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json`，防提示注入
 - **只读并行 / 写串行**（V2）：并发读取加速，副作用工具保持串行，结果按原顺序回填
 - **10 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `verify`（跑 tsc/eslint/test 自修）
@@ -313,13 +313,14 @@ V4 暂不包含（路线图 V5+）：repo map、MCP、Hooks、多 agent、TUI、
 ## 安全模型
 
 `run-agent` 默认拦得多、放行得少：所有 shell 命令执行都需确认，写/改工具在 `default` 模式需确认，
-且存在不可被规则解除的安全底线（`rm -rf /`、`git push --force`、`.git` 等敏感路径）。
+路径以工作目录为白名单边界（cwd 外**只读也问**），且存在不可被规则解除的安全底线（`rm -rf /`、
+`git push --force`、`.git`/`.claude`/`.run-agent` 路径段等）。**0.4.2 起无 bypass 模式**：
+`--dangerously-skip-permissions` 与 `--mode bypass` 已移除，旧配置里的 `"bypass"` 回退 `default` 并警告。
 交互 REPL 内按 `y/n/a` 授权（`a` 记入永久规则）；**one-shot 不弹确认，一律拒绝**。
 
 ```bash
 run-agent -t "帮我看一下这段代码"                     # -t 信任当前项目
-run-agent --mode acceptEdits "重构 src/utils.ts"      # 写/改免确认，命令仍询问
-run-agent --dangerously-skip-permissions "..."        # 不推荐：完全放行
+run-agent --mode acceptEdits "重构 src/utils.ts"      # 写/改免确认（仅 cwd 内），命令仍询问
 run-agent trust --list                                # 查看受信任项目
 ```
 

@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run build        # tsup 打包 → dist/cli.js（单文件 ESM，自带 shebang）
 npm run dev          # tsup --watch
 npm run typecheck    # tsc --noEmit（strict + exactOptionalPropertyTypes）
-npm run test         # 先 build 再 vitest run（18 文件 / 157 用例）
+npm run test         # 先 build 再 vitest run（23 文件 / 235 用例）
 npx vitest run tests/tools/edit.test.ts   # 跑单个测试文件
 npm run lint / npm run lint:fix
 npm run format / npm run format:check     # prettier
@@ -27,7 +27,7 @@ npm run smoke        # 构建后验证 --version / --help
 
 - **统一内部消息格式 `LLMMessage` 是全项目唯一真相**（对齐 Anthropic `tool_use`/`tool_result` block）。OpenAI 的 `tool_calls`/`tool` role 互转只发生在适配器层，loop 层只见统一格式。改消息格式必须同步 4 个适配器。流式是唯一形态；OpenAI 流式把 tool_calls 按 chunk 分片，适配器按 `index` 跨 chunk 聚合。
 - **工具即函数**：`Tool = { name, description, inputSchema: z.ZodType, call, isConcurrencySafe? }`。zod schema 经手写 `zodToJsonSchema`（零依赖）转 JSON Schema。**写类工具必须显式 `isConcurrencySafe: false`**（read/glob/grep 显式 `true`）；`src/core/execute.ts` 据此分区执行（只读并行上限 10、写串行），结果**按原始调用顺序**重排回填。
-- **权限管线**：判定是纯函数 `hasPermissionsToUseTool`（`src/permissions/engine.ts`：bypass → 内置底线 → 用户规则首条命中 → 模式兜底）。`ask` 的弹窗由 `src/permissions/prompt.ts` 的 `resolveAsk` 处理；`checkPermission` 在 `src/cli/repl.ts` 的 `makeCheckPermission(ctx, out, ask)` 组装。**铁律：stdin 只能有一个读者**——权限弹窗复用 REPL 的 readline（注入 `ask`），绝不在同一 stdin 上另建 readline（会导致输入回显成多个字符）。
+- **权限管线**：判定是纯函数 `hasPermissionsToUseTool`（`src/permissions/engine.ts`，V4.5 判定顺序：内置危险命令 → 用户 deny → 记忆读专属通道 → 危险目录段 → bash 正则 → 用户 allow → 白名单 cwd 分流 → 兜底 ask；**无 bypass 模式**）。`ask` 的弹窗由 `src/permissions/prompt.ts` 的 `resolveAsk` 处理；`checkPermission` 在 `src/cli/repl.ts` 的 `makeCheckPermission(ctx, out, ask)` 组装。**铁律：stdin 只能有一个读者**——权限弹窗复用 REPL 的 readline（注入 `ask`），绝不在同一 stdin 上另建 readline（会导致输入回显成多个字符）。
 - **配置优先级**：CLI flag > 环境变量（`RUN_AGENT_*`）> `~/.config/run-agent/config.json` > 默认值。`apiKeyEnv` 字段存的是**环境变量名**、不是 key 值；`resolveApiKey()` 解析：显式 `apiKey` > `apiKeyEnv` 指向的变量 > provider 默认约定（如 `ANTHROPIC_API_KEY`）。
 - **Bash 工具跨平台**：`resolveShell()` 在 win32 用 `powershell.exe -NoProfile -NonInteractive`，POSIX 用 `/bin/bash -lc`；`RUN_AGENT_SHELL` 可覆盖。默认 120s 超时 + 输出 30k 截断。
 - **会话持久化**：`~/.local/share/run-agent/sessions/<ts>-<id>.jsonl`，逐行 JSONL 追加。`--resume` 读最新会话回放 messages。

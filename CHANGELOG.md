@@ -2,6 +2,39 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.4.2] - 2026-08-11
+
+### Removed
+
+- **bypass 模式删除**（V4.5 决策 A）：`PermissionMode` 只剩 `default` / `acceptEdits`；
+  `--mode bypass` 与 `--dangerously-skip-permissions` 两个入口移除（`--mode bypass` 由 commander 报非法值）。
+  旧配置 / 环境变量里的 `"bypass"` 回退 `default` 并在启动时打印警告（温和降级，不崩溃）。
+
+### Added
+
+- **工作目录白名单（cwd 边界，决策 B）**：路径以 cwd 为界——cwd 内按模式兜底（只读免确认 /
+  `default` 写询问 / `acceptEdits` 写免确认）；**cwd 外只读工具也询问确认**（修缺口：`read_file ~/.ssh/id_rsa`
+  不再静默放行），`acceptEdits` 的免确认收窄到 cwd 内，越界访问唯一合法通道是用户 allow 规则。
+- **危险目录黑名单（决策 C）**：`.git` / `.claude` / `.run-agent` 路径段**小写化逐段比较**无条件 deny
+  （`read_file` 等任意路径工具，大小写变体同拦）；`run_bash` 命令文本引用 `.run-agent` 同样收口。
+- **记忆读专属通道（决策 C）**：Trust 会话内 `read_file` / `glob` / `grep` 对 `.run-agent/memory/**`
+  只读放行（判定在危险目录 deny **之前**）；写记忆仍只能走 `remember`。
+- **Windows 路径模式检测（决策 E）**：UNC / 长路径前缀 / NTFS ADS / 8.3 短名 / 尾随点空格 / DOS 设备名 /
+  三连点 → ask（不归一化，全平台跑）。
+- **realpath 双形态硬化（决策 E）**：路径判定同时看 resolve 后与 realpath 后两种形态（含父目录回退），
+  拦截 symlink 换名逃逸（`alias → .run-agent` / `alias → cwd 外`）。
+- 测试扩充：权限引擎决策矩阵（白名单内外分流 / symlink 逃逸 / 大小写 / Windows 模式 / 专属通道顺序 /
+  deny 优先于 allow）→ 共 **235 个用例**；CLI 冒烟覆盖非法 mode 回退与已删 flag 报错。
+
+### Changed
+
+- **统一判定顺序（决策 D）**：`hasPermissionsToUseTool` 重排为「内置危险命令 → 用户 deny → 专属通道 →
+  危险目录 → bash 正则 → 用户 allow → 白名单(cwd) → 兜底 ask」，与 Claude Code「deny 先于一切 allow」对齐；
+  用户 deny 规则不再与 allow 按"首条命中"短路，显式 deny 优先。
+- 文档：`docs/permissions.md` 重写为三层模型 + 判定顺序；README / SECURITY / context-management /
+  Plan_V4 / CLAUDE.md 同步移除 bypass 表述；新增 `docs/Bug_V4.md`、`docs/Bug_V4.5.md`（V4 / V4.5 开发期
+  Bug 记录，含最关键的 symlink 逃逸修复 V4.5-3）。
+
 ## [0.4.1] - 2026-08-11
 
 ### Added

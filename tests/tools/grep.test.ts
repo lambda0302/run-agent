@@ -46,4 +46,24 @@ describe("grep 工具", () => {
     const r = await grepTool.call({ pattern: "(", path: "C:/definitely/not/here" });
     expect(r.result).toContain("正则无效");
   });
+
+  it("默认跳过 .run-agent 目录（V4.5 决策 F：上层根遍历不进入 agent 自身目录）", async () => {
+    const dir = makeTree();
+    mkdirSync(path.join(dir, ".run-agent", "memory"), { recursive: true });
+    writeFileSync(path.join(dir, ".run-agent", "memory", "m.txt"), "hello agent\n");
+    const r = await grepTool.call({ pattern: "hello", path: dir });
+    expect(r.result).toContain("a.txt:1");
+    expect(r.result).not.toContain("m.txt");
+  });
+
+  it("显式把根设为 .run-agent/memory 时可读取（专属通道的遍历语义）", async () => {
+    const dir = makeTree();
+    mkdirSync(path.join(dir, ".run-agent", "memory"), { recursive: true });
+    writeFileSync(path.join(dir, ".run-agent", "memory", "m.txt"), "hello agent\n");
+    const r = await grepTool.call({
+      pattern: "hello",
+      path: path.join(dir, ".run-agent", "memory"),
+    });
+    expect(r.result).toContain("m.txt");
+  });
 });

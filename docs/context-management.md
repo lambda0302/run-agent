@@ -35,9 +35,9 @@
 
 - **触发**：用户明确说「记住 xxx」时，agent 用 `remember`；发现值得跨会话保留的稳定结论
   （测试命令、约定、决策）也可主动记。
-- **权限**：`remember` 是写类工具，走权限引擎——default 下 ask、`acceptEdits` 下免确认、
-  `bypass` 无条件；one-shot 不弹确认一律降级拒绝。用户可用规则 `{ "tool": "remember", "action": "deny" }`
-  完全禁用。
+- **权限**：`remember` 是写类工具，走权限引擎——default 下 ask、`acceptEdits` 下免确认
+  （0.4.2 起已无 bypass 模式，旧配置的 `"bypass"` 回退 default 并警告）；one-shot 不弹确认
+  一律降级拒绝。用户可用规则 `{ "tool": "remember", "action": "deny" }` 完全禁用。
 - **边界**：只写**用户级**，不写 project / local（`.run-agent` 保持只读，这是安全底线）。
   V4「主动记忆」再扩展结构化条目 / 检索 / 生命周期（`run-agent memory` 子命令）。
 

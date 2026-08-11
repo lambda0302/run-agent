@@ -43,7 +43,7 @@
 1. **写目标由工具内部计算,不接受入参路径**(防任意写):`scope="project"` → `path.join(cwd, ".run-agent", "memory")`,cwd 由 CLI 工厂注入;`scope="user"` → `userClaudeFilePath(homeDir)`(0.3.2 现状,仍是单文件 CLAUDE.md,不进记忆目录)。
 2. **Trust 门控**:`scope="project"` 要求 `isTrusted`(工厂注入);未信任项目 → 返回"项目未受信任,无法写入项目记忆"。
 3. **写入范围门控(本版收紧)**:`scope` **默认 `"project"`**——agent **主动沉淀只写项目级**;**用户级(`scope="user"`)仅在用户明确要求「更新用户记忆」时才写**,由 system prompt 指引 + 工具描述约束(见决策 B 的内容规范),不做技术强制——用户明确要求时理应当场放行,但**默认路径绝不写用户级**。
-4. **权限引擎门控**:`remember` 本就是写类工具——default 下 ask、`acceptEdits` 下 allow、`bypass` 无条件、用户规则可 deny(现有行为,不改;`scope="user"` 的调用同样可见可拒)。
+4. **权限引擎门控**:`remember` 本就是写类工具——default 下 ask、`acceptEdits` 下 allow、用户规则可 deny(0.4.2 起 bypass 已删除,旧值回退 default;`scope="user"` 的调用同样可见可拒)。
 5. **守卫复用**:自动去重(按 name 命中先更新,不重复建文件)+ 大小上限(topic 文件 `MAX_MEMORY_FILE_BYTES = 16KB`;索引 `MEMORY.md` 上限 200 行 / 25KB,超限拒写或告警)。
 
 **读豁免——唯一的、有意的放宽**(0.3.2「完全只读」在此处松开一角):

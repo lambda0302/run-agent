@@ -19,7 +19,7 @@ const runBash = TOOLS.find((t) => t.name === "run_bash") as Tool;
 const readFile = TOOLS.find((t) => t.name === "read_file") as Tool;
 
 function ctx(over: Partial<PermissionContext> = {}): PermissionContext {
-  return { mode: "default", rules: [], canPrompt: true, isTrusted: false, ...over };
+  return { mode: "default", rules: [], canPrompt: true, isTrusted: false, cwd: process.cwd(), ...over };
 }
 
 const dirs: string[] = [];
@@ -96,15 +96,27 @@ describe("resolveAsk（注入 ask 复用同一 readline，杜绝双回显）", (
 });
 
 describe("makeCheckPermission（REPL 内组装：engine + 注入 ask）", () => {
-  it("engine 判 allow → 不询问，直接放行", async () => {
+  it("engine 判 allow → 不询问，直接放行（cwd 内只读工具）", async () => {
     let called = false;
     const out = { write: () => {} } as unknown as NodeJS.WritableStream;
     const cp = makeCheckPermission(ctx(), out, async () => {
       called = true;
       return "y";
     });
-    expect(await cp(readFile, { file_path: "C:/proj/a.ts" })).toBe("allow");
+    expect(await cp(readFile, { file_path: "a.ts" })).toBe("allow");
     expect(called).toBe(false);
+  });
+
+  it("只读工具读 cwd 外 → 不再直接放行，走 ask 确认（V4.5 决策 B 缺口 ④ 修复）", async () => {
+    const asks: string[] = [];
+    const out = { write: () => {} } as unknown as NodeJS.WritableStream;
+    const cp = makeCheckPermission(ctx(), out, async (q) => {
+      asks.push(q);
+      return "n";
+    });
+    expect(await cp(readFile, { file_path: "../outside-secret.txt" })).toBe("deny");
+    expect(asks).toHaveLength(1);
+    expect(asks[0]).toContain("工作目录之外");
   });
 
   it("ask 命中时走注入的 ask；y → allow", async () => {
@@ -121,14 +133,14 @@ describe("makeCheckPermission（REPL 内组装：engine + 注入 ask）", () => 
     expect(written.join("")).toContain("已拒绝执行 run_bash");
   });
 
-  it("bypass → 不询问直接 allow（危险命令也放行）", async () => {
+  it("危险命令（rm -rf /）→ deny，即使 ask 也被跳过（bypass 删除后无任何模式放行）", async () => {
     let called = false;
     const out = { write: () => {} } as unknown as NodeJS.WritableStream;
-    const cp = makeCheckPermission(ctx({ mode: "bypass" }), out, async () => {
+    const cp = makeCheckPermission(ctx(), out, async () => {
       called = true;
       return "y";
     });
-    expect(await cp(runBash, { command: "rm -rf /" })).toBe("allow");
+    expect(await cp(runBash, { command: "rm -rf /" })).toBe("deny");
     expect(called).toBe(false);
   });
 });

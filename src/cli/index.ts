@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pkg from "../../package.json" with { type: "json" };
@@ -27,7 +27,9 @@ import { runOneShot, runRepl } from "./repl.js";
 
 const program = new Command();
 
-const PERMISSION_MODES = ["default", "acceptEdits", "bypass"] as const;
+// V4.5 决策 A：bypass 已删除。非法 --mode 值由 commander choices 直接报错；env/config 里的
+// 非法值在 resolveMode 回退 default 并警告（温和降级，不崩溃）。
+const PERMISSION_MODES = ["default", "acceptEdits"] as const;
 
 program
   .name("run-agent")
@@ -42,8 +44,12 @@ program
   )
   .option("-k, --api-key <apiKey>", "API key (overrides env var / config file)")
   .option("-r, --resume", "resume the latest session instead of starting a new one")
-  .option("-M, --mode <mode>", `permission mode: ${PERMISSION_MODES.join(" | ")} (default)`)
-  .option("--dangerously-skip-permissions", "bypass all permission checks (mode=bypass)")
+  .addOption(
+    new Option(
+      "-M, --mode <mode>",
+      `permission mode: ${PERMISSION_MODES.join(" | ")} (default)`,
+    ).choices([...PERMISSION_MODES]),
+  )
   .option("-t, --trust", "trust the current project directory (skips the Trust prompt)")
   .option("--bare", "disable CLAUDE.md memory and dynamic context injection")
   .option("--context-window <n>", "context window size in tokens (defaults per provider)")
@@ -140,17 +146,18 @@ interface CliOpts {
   apiKey?: string;
   resume?: boolean;
   mode?: string;
-  dangerouslySkipPermissions?: boolean;
   trust?: boolean;
   bare?: boolean;
   contextWindow?: number;
 }
 
-/** 解析权限模式：--dangerously-skip-permissions > --mode > RUN_AGENT_MODE > config > default */
+/** 解析权限模式：--mode > RUN_AGENT_MODE > config > default。
+ *  --mode 非法值已被 commander choices 拦截；env/config 的非法值（如旧配置里的 "bypass"）
+ *  回退 default 并打印警告（V4.5 决策 A 兼容处理，温和降级不崩溃）。 */
 function resolveMode(opts: CliOpts, configMode: string | undefined): PermissionMode {
-  if (opts.dangerouslySkipPermissions) return "bypass";
   const raw = opts.mode ?? process.env.RUN_AGENT_MODE ?? configMode;
   if (raw && (PERMISSION_MODES as readonly string[]).includes(raw)) return raw as PermissionMode;
+  if (raw) process.stderr.write(`⚠ 未知权限模式 "${raw}"，已回退到 default\n`);
   return "default";
 }
 
@@ -202,7 +209,7 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     rules.push(...loadRules(path.join(cwd, ".run-agent", "permissions.json")));
   }
 
-  const ctx: PermissionContext = { mode, rules, canPrompt, isTrusted };
+  const ctx: PermissionContext = { mode, rules, canPrompt, isTrusted, cwd };
 
   // ── V3 上下文：system 组装所需 + 生效的上下文窗口 ────────────────
   const systemCtx: SystemContext = { cwd, isTrusted, bare: Boolean(opts.bare) };
@@ -213,7 +220,7 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
   // 绝不另建 readline（stdin 只能有一个读者）。--bare 时 buildSystemPrompt 返回 undefined。
   const system = await buildSystemPrompt(systemCtx);
   const exploreCheckPermission = async (tool: Tool, input: unknown): Promise<Decision> => {
-    const d = hasPermissionsToUseTool(tool.name, input, ctx.mode, ctx.rules, ctx.isTrusted);
+    const d = hasPermissionsToUseTool(tool.name, input, ctx.mode, ctx.rules, ctx.isTrusted, ctx.cwd);
     return d === "ask" ? "deny" : d;
   };
 

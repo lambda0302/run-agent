@@ -72,7 +72,7 @@ export function makeCheckPermission(
   ask?: (question: string) => Promise<string>,
 ): (tool: Tool, input: unknown) => Promise<Decision> {
   return async (tool, input) => {
-    const d = hasPermissionsToUseTool(tool.name, input, ctx.mode, ctx.rules, ctx.isTrusted);
+    const d = hasPermissionsToUseTool(tool.name, input, ctx.mode, ctx.rules, ctx.isTrusted, ctx.cwd);
     if (d !== "ask") return d;
     const resolved = await resolveAsk(tool, input, ctx, ask);
     if (resolved === "deny") {
