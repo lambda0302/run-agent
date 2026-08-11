@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.4.0**（V4 · 主动记忆：项目级 `.run-agent/memory/` + MEMORY.md 索引 + `remember` 多 scope + `memory` 子命令）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.4.1**（代码理解：`repo_map` 两遍排序定位符号/文件 + `explore` 只读探索子 agent + `verify` 跑 tsc/eslint/test 读回错误自修）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.4.0
+run-agent --version    # 应输出 0.4.1
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
