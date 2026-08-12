@@ -26,6 +26,22 @@ import type { CommandRegistry } from "../services/commands/loader.js";
 import { expandPromptTemplate, execLocalCommand } from "../services/commands/exec.js";
 import { appendMessage } from "../utils/sessionStorage.js";
 
+// 定位 readline 内部"已从流里读出、还没触发行事件"的残留（无换行收尾的末行）。
+// Node 20/22 是 `_line` 字符串字段；Node 24 起改 `Symbol(_line_buffer)`。公共 getter
+// `rl.line` 在事件触发瞬间已被置空、不可用，只能直接摸内部字段。找不到字段 → 返回 ""
+// （该版本退化为旧的 inputBuf.length>=2 行为，无回归）。
+function readlineTail(rl: readline.Interface): string {
+  const anyRl = rl as unknown as Record<PropertyKey, unknown>;
+  const direct = anyRl["_line"];
+  if (typeof direct === "string" && direct.length > 0) return direct;
+  const sym = Object.getOwnPropertySymbols(rl).find((s) => s.description === "_line_buffer");
+  if (sym) {
+    const v = anyRl[sym];
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  return "";
+}
+
 export interface AgentOptions {
   client: LLMClient;
   /** V5 决策 B3：工具池可为函数（每轮重建，MCP 工具按需连接后动态注入）。 */
@@ -144,7 +160,7 @@ export function makeCheckPermission(
   ask?: (question: string) => Promise<string>,
   readOnlyNames?: (name: string) => boolean,
   preToolUse?: (name: string, input: unknown) => Promise<PreToolUseDecision | undefined>,
-): (tool: Tool, input: unknown) => Promise<PermissionCheckResult> {
+): (tool: Tool, input: unknown, source?: string) => Promise<PermissionCheckResult> {
   const isReadOnlyName =
     readOnlyNames ??
     ((name: string) =>
@@ -153,7 +169,7 @@ export function makeCheckPermission(
       name === "agent" ||
       name === "send_message" ||
       name === "task_stop");
-  return async (tool, input) => {
+  return async (tool, input, source) => {
     const d = hasPermissionsToUseTool(
       tool.name,
       input,
@@ -174,7 +190,7 @@ export function makeCheckPermission(
     // hook 放行：engine 未 deny 时生效（engine deny 是硬底线，不可被 hook 解除）
     if (hook?.permissionDecision === "allow" && d !== "deny") return "allow";
     if (d !== "ask") return d;
-    const resolved = await resolveAsk(tool, input, ctx, ask);
+    const resolved = await resolveAsk(tool, input, ctx, ask, source);
     if (resolved === "deny") {
       const target = inputPath(input);
       const reason =
@@ -227,6 +243,13 @@ function queryOpts(opts: AgentOptions, system: string | undefined) {
     ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}),
     ...(opts.onCompact ? { onCompact: opts.onCompact } : {}),
     ...(opts.resultsDir ? { resultsDir: opts.resultsDir } : {}),
+    // V7 决策 A7 接线：轮末等后台子 agent 全部完成并汇总注入，协调者委派后能收尾汇总。
+    // 之前 onBackgroundDone 从未传给 runQuery——后台任务完成也没人收集，协调者只说完
+    // 「等待它们返回后我会汇总结果」就 end_turn，结果被丢弃（实测复现）。awaitAll 已
+    // 去重（!reported）防跨 end_turn 重复注入死循环。
+    ...(opts.backgroundTasks
+      ? { onBackgroundDone: () => opts.backgroundTasks!.awaitAll() }
+      : {}),
   };
 }
 
@@ -310,10 +333,27 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
 
   // 权限确认复用本 REPL 的同一 readline（在 stdin 上再建 interface 是双回显 bug 的根因）
   // 弹窗开始前打开输出门：后台并行工具的结果先缓冲，答完刷出，不污染 y/n 提示行（0.5.1 显示修复）
+  // ── 输入收集状态：多行粘贴统一为单条 prompt（粘贴异常修复，见 line handler 注释）──
+  const PASTE_WAIT_MS = 300;
+  let inputBuf: string[] = [];
+  let submitTimer: NodeJS.Timeout | null = null;
+  let busy = false;
+  const promptQueue: string[] = [];
+  let drainingTail = false; // flush 时 rl.write("\n") 冲出的无换行残留并入本 prompt
+  let pasteTailPending = false; // 本 prompt 同 chunk 里有无换行残留末行（粘贴末行，见 line handler）
+  let discardNextLine = false; // ask 弹窗前冲掉的残留直接丢弃
+  let asking = false; // 弹窗进行中：flush 的冲残留不得写入，防污染 rl.question 答案
   const ask = (q: string) => {
     gate.begin();
+    asking = true;
+    // 冲掉 readline 缓冲里无换行残留（用户输入过但未提交的部分），防止它被 rl.question
+    // 当成答案读走——粘贴异常复现时权限弹窗答案被污染成非 y 的根因
+    discardNextLine = true;
+    rl.write("\n");
     return new Promise<string>((resolve) =>
       rl.question(q, (answer) => {
+        asking = false;
+        discardNextLine = false; // rl.write 未触发 line 事件时兜底复位，防泄漏到下一行
         gate.end();
         resolve(answer);
       }),
@@ -331,6 +371,11 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
     rl.close();
   });
   rl.on("close", () => {
+    // 防悬挂：关闭时清掉未触发的粘贴收集定时器（stdin EOF / /exit 后无残留定时器）
+    if (submitTimer) {
+      clearTimeout(submitTimer);
+      submitTimer = null;
+    }
     // V6 决策 A1：SessionEnd 钩子（fire-and-forget；hook 的挂起子进程保持事件循环存活）
     void runSessionHook(opts.hookManager, "end", gate.emit);
   });
@@ -346,8 +391,12 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
   rl.setPrompt("run-agent> ");
   promptLine();
 
-  rl.on("line", async (line) => {
-    const input = line.trim();
+  // 统一查询路径——普通 prompt 与 /技能命令都走这里（技能 body 作为 user 消息）。
+  // 处理单元从「每个 line 事件」提升为「每条收集完的 prompt」：多行粘贴先收集再一次性
+  // 处理——readline 按行触发 line 事件，逐行 runTurn 会并发、且无换行收尾的末行留在
+  // 内部缓冲可能污染权限弹窗答案（粘贴异常根因）。
+  const processPrompt = async (text: string): Promise<void> => {
+    const input = text.trim();
     if (!input) {
       promptLine();
       return;
@@ -594,6 +643,90 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
     }
 
     await runTurn(input);
+  };
+
+  // ── 输入收集 + 串行队列：多行粘贴合并为单条 prompt，同一时刻只有一个 turn ────────
+  const dequeue = async (): Promise<void> => {
+    if (busy) return;
+    const text = promptQueue.shift();
+    if (text === undefined) return;
+    busy = true;
+    try {
+      await processPrompt(text);
+    } finally {
+      busy = false;
+      void dequeue();
+    }
+  };
+  const submit = (text: string): void => {
+    const t = text.trim();
+    if (!t) {
+      promptLine();
+      return;
+    }
+    promptQueue.push(t);
+    void dequeue();
+  };
+  // 把 readline 内部缓冲里无换行收尾的残留冲成 line 事件（同步触发），并入本 prompt。
+  // 多行粘贴（≥2 行）才冲：单行提示符下用户可能正在输入下一条未完成行，冲掉会误收——
+  // 那种残留由 ask 弹窗的丢弃路径清理。
+  const drainTail = (): void => {
+    if (drainingTail) return;
+    drainingTail = true;
+    rl.write("\n");
+    drainingTail = false;
+  };
+  const flushInput = (): void => {
+    if (submitTimer) {
+      clearTimeout(submitTimer);
+      submitTimer = null;
+    }
+    // 弹窗进行中不冲：rl.write("\n") 会被 rl.question 读成答案，污染 y/n
+    // 门槛 = 已有 ≥2 完整行（旧行为）或 检测到同 chunk 无换行残留末行（0.7.2 补漏：
+    // 两行粘贴只有 1 个完整 line 事件，inputBuf.length 到不了 2，靠 pasteTailPending 冲）
+    if ((inputBuf.length >= 2 || pasteTailPending) && !asking) drainTail();
+    const text = inputBuf.join("\n");
+    inputBuf = [];
+    pasteTailPending = false;
+    submit(text);
+  };
+  const scheduleFlush = (): void => {
+    if (submitTimer) clearTimeout(submitTimer);
+    submitTimer = setTimeout(() => {
+      submitTimer = null;
+      flushInput();
+    }, PASTE_WAIT_MS);
+  };
+
+  // 收集器：行先进缓冲；空行 / 单行斜杠命令立即提交；否则空闲 300ms 后整批提交
+  rl.on("line", (line) => {
+    if (discardNextLine) {
+      discardNextLine = false;
+      return;
+    }
+    if (drainingTail) {
+      drainingTail = false;
+      inputBuf.push(line);
+      return;
+    }
+    if (!line.trim()) {
+      flushInput();
+      return;
+    }
+    inputBuf.push(line);
+    // 0.7.2 补漏：粘贴末行无换行收尾时，readline 内部缓冲在该行事件之后仍有无换行残留
+    // （与行事件同 chunk 到达 = 粘贴的一部分）。用 setImmediate 查——它在 `_onData` 同步
+    // 执行完、所有完整行事件都发射之后才跑，此时残留字段一定是"纯残留"；而「用户提交后
+    // 新输入」的下一行是独立 chunk，此刻还没到 → 不标记。标记后 flush 时把残留冲进本
+    // prompt，防它滞留成下一条的"待输入"（用户没按回车也显示，甚至被误提交）。
+    setImmediate(() => {
+      if (readlineTail(rl).length > 0) pasteTailPending = true;
+    });
+    if (inputBuf.length === 1 && line.trim().startsWith("/")) {
+      flushInput();
+      return;
+    }
+    scheduleFlush();
   });
 
   // SessionStart 钩子必须放在 line handler 注册之后 await：注册前的 await 会让 test 同步

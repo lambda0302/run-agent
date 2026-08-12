@@ -66,4 +66,35 @@ describe("grep 工具", () => {
     });
     expect(r.result).toContain("m.txt");
   });
+
+  it("path 指向单个文件：直接搜该文件（V7 修复——旧实现 readdir 抛错误报未找到）", async () => {
+    const dir = makeTree();
+    const file = path.join(dir, "sub", "b.ts");
+    const r = await grepTool.call({ pattern: "hello", path: file });
+    expect(r.result).toContain("const hello = 1");
+    // 命中行号正确，显示路径含用户传入的 sub/b.ts
+    expect(r.result).toMatch(/sub\/b\.ts:1/);
+  });
+
+  it("单文件无匹配返回未找到（路径存在时不再误报崩溃）", async () => {
+    const dir = makeTree();
+    const r = await grepTool.call({ pattern: "zzz", path: path.join(dir, "a.txt") });
+    expect(r.result).toContain("未找到匹配");
+  });
+
+  it("单文件路径不存在返回未找到（不崩溃）", async () => {
+    const dir = makeTree();
+    const r = await grepTool.call({ pattern: "hello", path: path.join(dir, "nope.ts") });
+    expect(r.result).toContain("未找到匹配");
+  });
+
+  it("单文件 + glob 过滤：不匹配则无结果（glob 用传入路径判定）", async () => {
+    const dir = makeTree();
+    const r = await grepTool.call({
+      pattern: "hello",
+      path: path.join(dir, "sub", "b.ts"),
+      glob: "**/*.ts",
+    });
+    expect(r.result).toContain("const hello = 1");
+  });
 });

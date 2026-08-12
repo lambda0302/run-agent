@@ -96,11 +96,11 @@ describe("explore（只读子 agent）", () => {
     expect(first?.content).toContain("MEMORY 索引");
   });
 
-  it("thoroughness → maxIterations（流式调用数 = 轮数，quick/medium/very thorough = 4/8/12）", async () => {
+  it("thoroughness → maxIterations（quick/medium/very thorough = 4/12/16；工具轮耗尽后补一轮收尾）", async () => {
     for (const [depth, expected] of [
       ["quick", 4],
-      ["medium", 8],
-      ["very thorough", 12],
+      ["medium", 12],
+      ["very thorough", 16],
     ] as const) {
       const ev = grepUse();
       const { client, calls } = fakeClient(() => [
@@ -110,7 +110,10 @@ describe("explore（只读子 agent）", () => {
       ]);
       const tool = makeExploreTool({ client });
       await tool.call({ prompt: "p", thoroughness: depth });
-      expect(calls).toHaveLength(expected);
+      // 工具轮耗尽后 query.ts 补一轮仅文本收尾 → 调用数 = 轮数 + 1
+      expect(calls).toHaveLength(expected + 1);
+      // 收尾轮请求不带工具（强制纯文本给结论）
+      expect(calls[expected]!.tools).toEqual([]);
     }
   });
 

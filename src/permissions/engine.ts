@@ -338,13 +338,15 @@ export function hasPermissionsToUseTool(
   if (tool === "run_bash") return "ask";
   if (p && forms && forms.some((f) => suspiciousOutsideCwd(f, cwd))) return "ask";
   if (!p) {
-    // 无路径入参的工具（repo_map/explore/verify/remember/glob 无 path 等）：不参与 cwd 边界
+    // 无路径入参的工具（repo_map/explore/verify/remember/glob 无 path 等）：不参与 cwd 边界。
+    // 用 readOnlyNames（V5 决策 B4）而非硬编码 READ_ONLY_TOOLS：让 REPL/CLI 装配的扩展闭包
+    // （协调者三件套 agent/send_message/task_stop + explore + MCP readOnlyHint）在 default 下也免确认。
     if (mode === "acceptEdits") return "allow";
-    if (READ_ONLY_TOOLS.has(tool)) return "allow";
+    if (readOnlyNames(tool)) return "allow";
     return "ask";
   }
   if (pathInCwd(p, cwd)) {
-    if (READ_ONLY_TOOLS.has(tool)) return "allow";
+    if (readOnlyNames(tool)) return "allow";
     if (mode === "acceptEdits") return "allow";
     return "ask";
   }

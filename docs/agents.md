@@ -11,7 +11,7 @@ V7 引入子 agent 编排：主 agent 用 **`agent` 工具**把任务委派给 s
 | 类型              | 说明                                                                              |
 | ----------------- | --------------------------------------------------------------------------------- |
 | `general-purpose` | 通用 worker：继承父级全部工具（**不含** `agent`/`send_message`/`task_stop`，防递归失控） |
-| `explore`         | 只读探索：仅 `repo_map`/`glob`/`grep`/`read_file`，`maxIterations=8`（0.4.1 迁移）     |
+| `explore`         | 只读探索：仅 `repo_map`/`glob`/`grep`/`read_file`，`maxIterations=12`（0.4.1 迁移，0.7.2 上调） |
 | `verification`    | （0.7.1）证据式验证专家：只读 + `run_bash`（safe 自动放行 / 项目写 deny / `/tmp` 放行），出具带命令证据的 `VERDICT: PASS|FAIL|PARTIAL`，`maxIterations=12` |
 
 **三件套只装配主 agent**：`agent`/`send_message`/`task_stop` 三个协调原语不会出现在子 agent 的
@@ -51,10 +51,23 @@ agent { description, prompt, agentType?, model?, run_in_background? }
 - 前台（默认）：阻塞等待子 agent 结束，返回 `[<类型> 结论]` + reply。
 - 后台（`run_in_background: true`）：立即返回 `task-<n>` 占位，本轮结束由主循环
   `awaitAll` 收集——每个后台任务独立 transcript `subagent-<n>.jsonl`（同会话目录）。
+- **`agentType` 取值直接可见**：工具描述在创建时从 registry 动态列出全部可委派类型
+  （内置 + 自定义），模型无需去文件系统搜 `.run-agent/agents/`（对搜索工具不可见）或
+  试图创建类型文件（写 `.run-agent/` 被引擎硬拒）。新增自定义类型后重启即出现在描述里。
 
 **权限继承**：子 agent 沿用父级 `checkPermission`（用户 deny 规则、内置 deny 底线全部生效），
 子 agent 永远不能获得超过父级的权限。**后台任务永不弹窗**：子查询里权限 `ask` 一律降级
-`deny`（后台轮末汇总时 REPL 不空闲，弹窗会死锁）。
+`deny`（后台轮末汇总时 REPL 不空闲，弹窗会死锁）。**前台子 agent 的权限弹窗带来源标签**：
+agent 工具在继承父级 `checkPermission` 时包一层注入 `子 agent: <类型>`，弹窗文本前缀
+`[子 agent: general-purpose] 允许 …?`——一眼分辨请求来自子 agent；主循环请求不带标签。
+类型级专门权限策略（如 verification）不受影响、永不 ask。
+
+**预算提示 + 收尾轮（0.7.2）**：`runQuery` 会把迭代轮数上限注入 system（`## 迭代预算` 段，
+数值随类型 `maxIterations` 变化）——子 agent 知道自己有多少轮，会主动规划收尾（模型知情，
+不会被看不见的轮数墙硬切）。收尾轮兜底：撞顶时若最后一轮仍以 `tool_use` 收尾（或
+`max_tokens`/`error` 被截断、空 completion 重试耗尽），注入「请给出最终结论」指令并
+**清空工具**再流一轮（有界，只多一轮），保证 `reply` 是真正的结论而非半截话。子 agent
+因此总能拿到一个可用于汇总的结论。
 
 ## 协调者三件套
 
@@ -82,6 +95,8 @@ run-agent                    # 不加 --coordinator：模型仍可手动调 agen
 
 交互 REPL 下 `/tasks` 列出后台子 agent（task_id / 类型 / 状态 / prompt 摘要）。headless
 `--print` 单轮不装配后台任务列表，但前台 `agent` 工具同样可用。
+
+> 手工验证真模型时,按类型组织的回归测试 prompt 见 [docs/testing-queries.md](testing-queries.md)。
 
 ## 与 Skills / Hooks 的关系
 

@@ -83,7 +83,7 @@ program
     "headless: run this prompt once and exit (mutually exclusive with positional prompt)",
   )
   .option("--json", "output structured JSON to stdout (with --print); human logs go to stderr")
-  .option("--max-turns <n>", "ReAct loop iteration cap for headless runs (default 25)")
+  .option("--max-turns <n>", "ReAct loop iteration cap for headless runs (default 25); 撞顶仍在调工具时多跑一轮纯文本收尾（0.7.2）")
   .action(async (prompt: string | undefined, opts: Record<string, unknown>) => {
     try {
       await main(prompt, opts);

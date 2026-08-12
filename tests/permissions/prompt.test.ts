@@ -100,6 +100,32 @@ describe("resolveAsk（注入 ask 复用同一 readline，杜绝双回显）", (
     expect(r).toBe("deny");
     expect(called).toBe(false);
   });
+
+  it("带 source（子 agent 来源）→ 弹窗文本前缀 [子 agent: <类型>]", async () => {
+    const asks: string[] = [];
+    const r = await resolveAsk(
+      runBash,
+      { command: "echo hi" },
+      ctx(),
+      async (q) => {
+        asks.push(q);
+        return "y";
+      },
+      "子 agent: general-purpose",
+    );
+    expect(r).toBe("allow");
+    expect(asks[0]).toContain("[子 agent: general-purpose] 允许 run_bash");
+  });
+
+  it("无 source（主循环）→ 弹窗文本不带来源前缀", async () => {
+    const asks: string[] = [];
+    await resolveAsk(runBash, { command: "echo hi" }, ctx(), async (q) => {
+      asks.push(q);
+      return "y";
+    });
+    expect(asks[0]).toMatch(/^\n允许 run_bash /);
+    expect(asks[0]).not.toContain("[子 agent:");
+  });
 });
 
 describe("makeCheckPermission（REPL 内组装：engine + 注入 ask）", () => {

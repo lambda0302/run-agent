@@ -34,7 +34,7 @@ run-agent
 | `-r, --resume`       | 续接最近一次会话                                                                  |
 | `--print <p>`        | headless：跑完这条 prompt 一次就退出（与位置参数 prompt 互斥）                    |
 | `--json`             | headless 结构化输出：stdout 只出 JSON，人类日志去 stderr（需 `--print`）          |
-| `--max-turns <n>`    | headless 的 ReAct 循环轮数上限（默认 25）                                         |
+| `--max-turns <n>`    | headless 的 ReAct 循环轮数上限（默认 25）；撞顶仍在调工具时多跑一轮纯文本收尾（0.7.2） |
 | `--coordinator`      | 0.7.0：协调者模式——注入协调者 system，用 `agent`/`send_message`/`task_stop` 编排子 agent |
 
 ## 配置优先级
@@ -116,7 +116,7 @@ run-agent --resume "继续"      # 在最近会话上下文中追加一条 promp
 ```bash
 run-agent --print "重构 src/utils.ts"                    # 跑一次，人类日志在终端
 run-agent --print "读 README.md" --json > out.json        # 结构化 JSON，人类日志去 stderr
-run-agent --print "…" --json --max-turns 5               # 限制 ReAct 循环轮数
+run-agent --print "…" --json --max-turns 5               # 限制 ReAct 循环轮数（撞顶仍在调工具时多一轮纯文本收尾）
 ```
 
 - `--print <prompt>` 与位置参数 prompt **互斥**（二选一，同时给 → 报错退出）。
@@ -134,7 +134,7 @@ run-agent --print "…" --json --max-turns 5               # 限制 ReAct 循环
   "session": "20260812-…-xxxx.jsonl", // 会话文件名（basename）
   "reply": "模型最终回复",
   "messages": 4, // 本次会话消息总数（含 system 之外的所有轮）
-  "turns": 2, // ReAct 循环轮数（默认上限 25）
+  "turns": 2, // ReAct 循环轮数（默认上限 25；撞顶仍在调工具时含 1 轮收尾）
   "tools": [
     // 工具执行轨迹（按调用顺序）
     {

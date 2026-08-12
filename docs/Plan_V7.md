@@ -13,6 +13,7 @@
 
 - **V7 0.7.0 已发布**:npm latest = 0.7.0;commit `d28b254`(V7 主体)+ tag `v0.7.0`;CI 3 OS × Node 20/22/24 全绿。多 Agent 编排落地——`agent` 工具 + 协调者三件套(send_message/task_stop)+ `--coordinator` + 自定义 agent 类型(frontmatter)。文档 `docs/agents.md`;Bug 记录无(V7-0.x 未发现,如有归入 `docs/Bug_V7.md`)。
 - **V7 0.7.1 已发布**:npm latest = 0.7.1;tag `v0.7.1`;CI 3 OS × Node 20/22/24 全绿(455 用例)。verification 验证子 agent(决策 D:证据式 VERDICT 契约 + 专门权限策略)+ 后台记忆提取双轨(决策 E:游标增量 + 互斥 + 失败静默)。文档 `docs/memory.md` 补双轨;测试 48 文件 / 455 用例全绿。
+- **V7 0.7.2 已发布**(2026-08-12):npm latest = 0.7.2;tag `v0.7.2`;CI 全绿(480 用例 / 50 文件)。异常修复批(用户实测驱动):engine 只读闭包(default 下协调者三件套必 ask)、REPL 多行粘贴合并 + 无换行末行滞留、grep 单文件路径、空 completion 有界重试、后台收集接线(onBackgroundDone)、**收尾轮**(预算撞顶只回末轮片段 → 清工具再流一轮逼出结论,explore 预算 4/12/16)、**L1 预算提示**(maxIterations 注入 system)、**权限弹窗来源标签**(前台子 agent `[子 agent: <类型>]`)、**agent 工具描述动态列类型**(registry.list() 注入,模型直接见 agentType)。真实模型 QA 首测通过;qa 审 engine.ts 的 6 条权限发现归档 `docs/Bug_V7.md`(**待用户搞清权限后统一修**)。
 - **V6(0.6.0)已发布**:npm latest = 0.6.0;commit `19d0195`(V6 主体)+ `59dd636`(V6-3 macOS pathInCwd 修复);tag `v0.6.0`;CI 3 OS × Node 20/22/24 9 job 全绿。Bug 记录 `docs/Bug_V6.md`(3 条)。
 - **V6 DoD 仅剩「真实模型手动验证(需 key)」**:hooks 触发 / skill 激活 / headless 全链路——不是代码缺口,同 V4/V5 列为每个版本验收尾项。
 - **0.4.1 `explore` 子 agent 是 V7 的种子**:已实现「嵌套 runQuery + 只读工具集 + 权限继承 + 上下文独立 + thoroughness」,注释明确「**后台运行与模型选择留到 V7(泛化为 Agent 工具)**」;`docs/Plan_V6.md` §5 交接段同义标注。V7 把它泛化成 `agent` 工具 + 类型注册表。
@@ -167,7 +168,7 @@ class BackgroundTaskManager {
 | 类型 | 工具集 | 权限策略 | 说明 |
 | ---- | ------ | -------- | ---- |
 | `general-purpose` | 父级全部工具(**不含 agent/SendMessage/TaskStop**,防递归) | 继承父级(foreground ask 可弹) | 通用委派 worker |
-| `explore` | repo_map / glob / grep / read_file(0.4.1 只读集) | 继承父级(只读 default 免确认) | 只读探索;`thoroughness` 控制深度(quick/medium/very thorough → 4/8/12 轮) |
+| `explore` | repo_map / glob / grep / read_file(0.4.1 只读集) | 继承父级(只读 default 免确认) | 只读探索;`thoroughness` 控制深度(quick/medium/very thorough → 4/12/16 轮) |
 | `verification` | 只读集 + verify + run_bash(受限) | 决策 D3 专门策略(safe bash 放行 / 项目写 deny / /tmp 放行) | 对抗性验证(0.7.1) |
 
 - **协调者三件套只装配进主 agent 工具池**,内置子 agent 类型默认不含——worker 职责单一,无协调权,防「子 agent 再 spawn 子 agent」的递归失控(自定义 frontmatter `tools` 显式加才开)。

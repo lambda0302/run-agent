@@ -2,6 +2,20 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.7.2] - 2026-08-12
+
+### Fixed
+
+- **子 agent 空结论/半截结论**：`runQuery` 迭代上限撞顶时只返回「末轮工具调用前的文本片段」——explore 子 agent 常把全部轮数花在取证上、从没进入「给结论」阶段。修复：预算耗尽且末轮仍调工具（`tool_use`/`max_tokens`/`error`）→ 注入「请给出最终结论」指令 + **无工具**再流一轮（有界，只多一轮），`reply` 即为收尾轮结论；空 completion 重试耗尽后同样做一次收尾轮。收尾轮内再遇截断/出错/空响应直接有界返回，绝不无限循环。`explore` 迭代预算上调：medium 8→12、very thorough 12→16。
+- **`--max-turns` 契约微调**：headless 撞顶且模型仍在调工具时多跑一轮纯文本收尾（`turns` 含该轮），保证 `reply` 是结论而非半截话。
+- **两行粘贴末行滞留成下一条"待输入"**：末行无换行收尾的粘贴，readline 只发 `n-1` 个完整 line 事件，旧 drain 门槛 `inputBuf.length>=2` 不触发 → 末行滞留在 readline 缓冲，出现在下一条 `run-agent>` 提示符上变成待输入（用户没按回车也显示、甚至被误提交）。修复：line 事件后用 `setImmediate` 查 readline 内部残留（Node ≤22 的 `_line` / Node 24 的 `Symbol(_line_buffer)`，版本容错 helper），同 chunk 有残留则标记 `pasteTailPending`，flush 时并入本 prompt。「提交后新输入」是独立 chunk、事件时刻残留为空 → 不并入（不误收）。
+
+### Added
+
+- **L1 预算提示（治本）**：`runQuery` 把迭代轮数上限注入 system（`## 迭代预算` 段，数值随 `maxIterations` 变化）——模型知情后主动规划收尾，不再被看不见的轮数墙硬切。主循环/子 agent 一律生效；compact 摘要等子请求用原始 system、不受影响。
+- **权限弹窗来源标签**：前台子 agent 的权限申请在弹窗文本前缀 `[子 agent: <类型>]`（如 `[子 agent: general-purpose] 允许 run_bash …?`），一眼分辨"是谁在向我要权限"。实现：`resolveAsk`/`makeCheckPermission` 加可选 `source` 参数，agent 工具在**继承**父级 `checkPermission` 时包一层注入来源标签（类型级策略如 verification 不受影响、永不 ask）；主循环请求不带标签。后台子 agent 照旧永不弹窗。行为零变化（y/n/a、允许规则记忆、回车方式全不变）。
+- **`agent` 工具描述动态列出全部可委派类型**：模型直接看到 `agentType` 可选值（内置 general-purpose / explore / verification + 全部自定义 frontmatter 类型，如 `qa`）——不必去文件系统搜 `.run-agent/agents/`（该目录对搜索工具不可见）猜类型，更不会试图自己创建类型文件（写 `.run-agent/` 被引擎硬拒）。工具创建时从 registry 快照类型名列表注入描述。
+
 ## [0.7.1] - 2026-08-12
 
 ### Added

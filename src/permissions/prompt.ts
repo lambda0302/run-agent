@@ -41,6 +41,7 @@ export async function resolveAsk(
   input: unknown,
   ctx: PermissionContext,
   ask?: (question: string) => Promise<string>,
+  source?: string,
 ): Promise<Decision> {
   if (!ctx.canPrompt) {
     return "deny"; // 非交互：由 CLI 输出拒绝原因
@@ -51,7 +52,9 @@ export async function resolveAsk(
   const p = inputPath(input);
   const outsideCwd = p !== undefined && !pathInCwd(p, ctx.cwd);
   const note = outsideCwd ? "（该路径在允许的工作目录之外，如需放行请配置 allow 规则）" : "";
-  const question = `\n允许 ${tool.name}${desc ? ` ${desc}` : ""}${note}？ [y=本次允许 / n=拒绝 / a=始终允许] `;
+  // 来源标签：子 agent（前台）的权限申请由 agent 工具包 wrap 注入，弹窗可直接分辨"谁在问"
+  const who = source ? `[${source}] ` : "";
+  const question = `\n${who}允许 ${tool.name}${desc ? ` ${desc}` : ""}${note}？ [y=本次允许 / n=拒绝 / a=始终允许] `;
   // 优先用调用方注入的 ask（REPL 复用同一 readline，杜绝双回显）；
   // 缺省时自行建临时 readline（仅测试/其它入口兜底）。
   const answer = ask

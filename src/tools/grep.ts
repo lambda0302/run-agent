@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import type { Tool, ToolCallResult } from "../tools.js";
@@ -85,16 +85,27 @@ export const grepTool: Tool = {
     }
     const globRe = glob ? globToRegExp(glob) : undefined;
 
+    // path 可指向单个文件（模型常按文件 grep）：直接搜该文件；否则按目录递归收集。
+    // 旧实现对文件路径 readdir 抛错被静默吞掉 → 永远「未找到匹配」（explore 子 agent
+    // 证据链断裂 / 空结论的根因之一）。
+    const st = await stat(root).catch(() => undefined);
+    const isSingleFile = st?.isFile() === true;
     const files: string[] = [];
-    await collectFiles(root, ignoreSet, files);
+    if (isSingleFile) {
+      files.push(root);
+    } else {
+      await collectFiles(root, ignoreSet, files);
+    }
 
     const hits: string[] = [];
     for (const file of files) {
       if (hits.length >= MAX_RESULTS) break;
-      if (globRe) {
-        const rel = path.relative(root, file).split(path.sep).join("/");
-        if (!globRe.test(rel)) continue;
-      }
+      // 显示用相对路径：单文件 = 用户传入的 path（模型按传入路径定位，如 src/cli/repl.ts:141）；
+      // 目录 = 相对搜索根。glob 过滤与命中输出用同一 rel。
+      const rel = isSingleFile
+        ? (dir ?? path.basename(root)).replace(/\\/g, "/")
+        : path.relative(root, file).split(path.sep).join("/");
+      if (globRe && !globRe.test(rel)) continue;
       let content: string;
       try {
         const buf = await readFile(file);
@@ -105,7 +116,6 @@ export const grepTool: Tool = {
         continue;
       }
       const lines = content.split("\n");
-      const rel = path.relative(root, file).split(path.sep).join("/");
       for (let i = 0; i < lines.length && hits.length < MAX_RESULTS; i++) {
         if (re.test(lines[i]!)) hits.push(`${rel}:${i + 1}: ${lines[i]}`);
       }

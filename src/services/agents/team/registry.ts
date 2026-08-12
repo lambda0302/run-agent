@@ -30,7 +30,7 @@ export interface SpawnTaskOptions {
   tools: Tool[] | (() => Tool[]);
   system?: string;
   contextWindow?: number;
-  checkPermission?: (tool: Tool, input: unknown) => Promise<PermissionCheckResult>;
+  checkPermission?: (tool: Tool, input: unknown, source?: string) => Promise<PermissionCheckResult>;
   maxIterations?: number;
   resultsDir?: string;
   onText?: (t: string) => void;

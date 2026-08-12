@@ -15,7 +15,7 @@ import { appendMessage } from "../utils/sessionStorage.js";
  * 解决循环依赖：repl.ts 需要 buildTools 的 agent 工具，agent 工具需要主循环的 checkPermission。 */
 export interface PermissionBridge {
   /** 必填但可 undefined：exactOptionalPropertyTypes 下允许 repl/one-shot 无条件赋值。 */
-  checkPermission: ((tool: Tool, input: unknown) => Promise<PermissionCheckResult>) | undefined;
+  checkPermission: ((tool: Tool, input: unknown, source?: string) => Promise<PermissionCheckResult>) | undefined;
 }
 
 export interface AgentRunOptions {
@@ -27,8 +27,9 @@ export interface AgentRunOptions {
   /** 类型 base system + 主 system 快照拼接（决策 A5）；缺省无。 */
   system?: string;
   contextWindow?: number;
-  /** 子查询权限；前台继承父级（bridge），后台由 manager 包装 ask→deny。缺省 engine 兜底。 */
-  checkPermission?: (tool: Tool, input: unknown) => Promise<PermissionCheckResult>;
+  /** 子查询权限；前台继承父级（bridge），后台由 manager 包装 ask→deny。缺省 engine 兜底。
+   *  source 为权限弹窗来源标签（如 "子 agent [explore]"），由 agent 工具包 wrap 注入。 */
+  checkPermission?: (tool: Tool, input: unknown, source?: string) => Promise<PermissionCheckResult>;
   maxIterations?: number;
   /** 标记本请求来源（子查询走普通来源；compact 摘要走 'compact' 防递归） */
   querySource?: string;

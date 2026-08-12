@@ -34,7 +34,13 @@ class FakeClient implements LLMClient {
     this.calls.push(messages);
     const next = this.scripted.shift();
     if (next instanceof Error) throw next;
-    for (const ev of next ?? [{ type: "done", stopReason: "end_turn" }]) yield ev;
+    // 默认给一条非空完成：V7 空 completion 兜底会对空响应有界重试，脚本用空的 endTurn
+    // 会平白多出重试调用、污染 calls 断言（这些用例只验引擎游标/守卫，不验模型回复）
+    for (const ev of next ?? [
+      { type: "text", text: "完成" },
+      { type: "done", stopReason: "end_turn" },
+    ])
+      yield ev;
   }
 }
 
@@ -49,7 +55,10 @@ const asstRemember = (c: string): LLMMessage => ({
   ],
 });
 
-const endTurn = [{ type: "done", stopReason: "end_turn" }] as StreamEvent[];
+const endTurn = [
+  { type: "text", text: "完成" },
+  { type: "done", stopReason: "end_turn" },
+] as StreamEvent[];
 
 /** 子 agent 请求的用户消息（首个调用 = system，第二个 = 提取 prompt）。 */
 const promptOf = (messages: LLMMessage[]): string =>

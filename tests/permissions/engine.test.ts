@@ -755,6 +755,44 @@ describe("hasPermissionsToUseTool plan 分支（V5 决策 A1）", () => {
   });
 });
 
+// ── V7 修复：协调者三件套 default 下免确认（readOnlyNames 扩展闭包生效）──────────────
+// 用户实测 Query A（并行 explore 子 agent）首调被拒"未获授权"：engine step-7 只认硬编码
+// READ_ONLY_TOOLS（不含 agent/send_message/task_stop），CLI 装配的扩展闭包在 default 下失效。
+describe("hasPermissionsToUseTool 协调者三件套（V7 修复）", () => {
+  // REPL/CLI 装配闭包：内置只读 ∪ explore ∪ 协调者三件套（cli/index.ts readOnlyNames）
+  const readOnlyPlusTeam = (name: string) =>
+    [
+      "read_file",
+      "glob",
+      "grep",
+      "repo_map",
+      "explore",
+      "agent",
+      "send_message",
+      "task_stop",
+    ].includes(name);
+
+  it("default 下 agent/send_message/task_stop/explore 免确认（无路径入参）", () => {
+    const dir = workdir();
+    for (const tool of ["agent", "send_message", "task_stop", "explore"] as const) {
+      expect(
+        hasPermissionsToUseTool(tool, { prompt: "x" }, "default", RULES, false, dir, readOnlyPlusTeam),
+        tool,
+      ).toBe("allow");
+    }
+  });
+
+  it("缺省 readOnlyNames（保守缺省）→ 三件套 default 下仍 ask", () => {
+    const dir = workdir();
+    for (const tool of ["agent", "send_message", "task_stop"] as const) {
+      expect(
+        hasPermissionsToUseTool(tool, { prompt: "x" }, "default", RULES, false, dir),
+        tool,
+      ).toBe("ask");
+    }
+  });
+});
+
 // ── V5 决策 B4：MCP 工具权限（mcp_connect 免确认 + readOnlyNames 矩阵）────────
 describe("hasPermissionsToUseTool MCP（V5 决策 B4）", () => {
   // REPL 装配闭包：内置只读 ∪ explore ∪ MCP readOnlyHints（mcp__srv__ro_op）

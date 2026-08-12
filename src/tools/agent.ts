@@ -36,8 +36,9 @@ export interface AgentToolOptions {
   /** 主 system 快照（含 MEMORY.md 索引）——并入子 system（A5）。 */
   system?: string;
   contextWindow?: number;
-  /** 子查询权限:主循环 checkPermission（bridge 提供,前台可弹窗）。缺省 engine 兜底。 */
-  checkPermission?: (tool: Tool, input: unknown) => Promise<PermissionCheckResult>;
+  /** 子查询权限:主循环 checkPermission（bridge 提供,前台可弹窗）。缺省 engine 兜底。
+   *  第三参 source 为权限弹窗来源标签,由本工具包 wrap 注入（"子 agent [<类型>]"）。 */
+  checkPermission?: (tool: Tool, input: unknown, source?: string) => Promise<PermissionCheckResult>;
   /** model 覆盖工厂（CLI 注入）:provider/apiKey/baseURL 与主一致,只换 model（A3）。 */
   makeModelClient?: (model: string) => LLMClient;
   registry: AgentRegistry;
@@ -50,14 +51,17 @@ export interface AgentToolOptions {
 }
 
 export function makeAgentTool(opts: AgentToolOptions): Tool {
+  // 动态列出注册表里全部可委派类型（内置 + 自定义 frontmatter）——模型直接看到
+  // agentType 有哪些可选值，不必去文件系统瞎猜/创建类型（.run-agent/ 对工具不可见）。
+  const typeNames = opts.registry.list().map((t) => t.name).join(" / ");
   return {
     name: "agent",
     description:
-      "Spawn a sub-agent to perform a task, then return its conclusion. " +
-      "Use to delegate a well-scoped task to a specialist (agentType: general-purpose / explore / " +
-      "verification or a custom type). run_in_background=true returns a task_id immediately and the " +
-      "result is collected at end of turn (use send_message to add input / task_stop to abort). " +
-      "Sub-agents inherit the parent's permissions but can never exceed them.",
+      `Spawn a sub-agent to perform a task, then return its conclusion. ` +
+      `Use to delegate a well-scoped task to a specialist. Available agentType values: ${typeNames}. ` +
+      `run_in_background=true returns a task_id immediately and the ` +
+      `result is collected at end of turn (use send_message to add input / task_stop to abort). ` +
+      `Sub-agents inherit the parent's permissions but can never exceed them.`,
     inputSchema: schema,
     isConcurrencySafe: true,
     async call(input): Promise<ToolCallResult> {
@@ -80,8 +84,16 @@ export function makeAgentTool(opts: AgentToolOptions): Tool {
       // 子 system = 类型 base system + 主 system 快照（一次性组装,A5）
       const subSystem = [def.system, opts.system].filter((s) => s && s.length > 0).join("\n\n");
       // V7 决策 D3：类型级专门权限策略优先（verification 的 safe bash allow / 项目写 deny），
-      // 否则继承父级 checkPermission（engine 硬底线 / 用户规则在子查询同样生效）
-      const cp = def.checkPermission ?? opts.checkPermission;
+      // 否则继承父级 checkPermission（engine 硬底线 / 用户规则在子查询同样生效）。
+      // 继承时包一层注入「子 agent [<类型>]」来源标签 → 权限弹窗可分辨请求来自子 agent。
+      const typeCp = def.checkPermission;
+      const inheritedCp = opts.checkPermission;
+      const cp =
+        typeCp ??
+        (inheritedCp
+          ? (tool: Tool, input: unknown): Promise<PermissionCheckResult> =>
+              inheritedCp(tool, input, `子 agent: ${typeName}`)
+          : undefined);
       const shared = {
         client,
         tools: def.resolveTools(opts.parentTools),
@@ -107,7 +119,12 @@ export function makeAgentTool(opts: AgentToolOptions): Tool {
         };
       }
       const result = await runAgent({ prompt, ...shared });
-      return { result: `[${typeName} 结论]\n${result.reply}` };
+      const body = result.reply.trim();
+      // V7 空结论兜底：query 层的空 completion 重试耗尽仍为空 → 明确提示，别让协调者看到
+      // 空「[explore 结论]」误以为成功
+      return {
+        result: `[${typeName} 结论]\n${body || "(子 agent 空结论——重试后仍无文本输出，请重新委派或补充任务)"}`,
+      };
     },
   };
 }

@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.7.1**（多 Agent 编排 + verification 验证子 agent + 后台记忆提取双轨）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.7.2**（多 Agent 编排 + 收尾轮/预算提示 + 权限弹窗来源标签 + agent 类型动态列出）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.7.1
+run-agent --version    # 应输出 0.7.2
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
@@ -318,7 +318,7 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **写入记忆**（0.3.2）：`remember` 工具把「用户明确要求记住 / 跨会话值得保留」的结论写进用户级 `~/.config/run-agent/CLAUDE.md`，自动去重，走权限引擎
 - **主动记忆**（0.4.0，V4）：项目级 `.run-agent/memory/`，每条记忆独立文件（frontmatter `type` + 正文），`MEMORY.md` 索引常驻 system；`remember` 默认写项目级（按 `name` 去重更新），`scope="user"` 仅用户明确要求时写；Trust 会话内只读豁免记忆目录
 - **记忆维护**（0.4.0）：`run-agent memory list/show/rm/prune` 子命令管理项目记忆；`glob`/`grep` 遍历默认忽略 `.run-agent`
-- **代码理解**（0.4.1）：`repo_map` 两遍排序定位符号/文件（git 索引 + 路径打分 + 符号扫描，非 git 仓库降级 readdir）· `explore` 只读探索子 agent（4/8/12 轮，上下文独立）· `verify` 对改动文件跑 tsc/eslint/test 把错误读回自修（命令白名单 + 120s 超时 + 30k 截断）
+- **代码理解**（0.4.1）：`repo_map` 两遍排序定位符号/文件（git 索引 + 路径打分 + 符号扫描，非 git 仓库降级 readdir）· `explore` 只读探索子 agent（4/12/16 轮，上下文独立）· `verify` 对改动文件跑 tsc/eslint/test 把错误读回自修（命令白名单 + 120s 超时 + 30k 截断）
 - **超大工具结果指针化**（V3）：超阈值结果落盘、消息里只留指针，模型需要时自己 `read_file`
 - **权限审批引擎**（V2 / 0.4.2）：`default` / `acceptEdits` 两档模式（bypass 已删除）+ **Plan 模式**（0.5.0，强制只读），危险目录黑名单 + 工作目录白名单 + 记忆读专属通道三层模型，内置危险命令与敏感路径底线，支持全局 + 项目级规则
 - **Plan 模式**（0.5.0）：复杂任务先只读探索、再出计划、经你批准才动手——`enter_plan_mode` 进入强制只读（写/执行/非只读 MCP 工具一律 deny），`exit_plan_mode` 呈现计划并弹窗审批（计划落盘 `.run-agent/plans/`），批准后自动恢复执行权限；也可直接 `/plan` 手动进入
@@ -337,7 +337,7 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **透明**：REPL 里实时看到模型文本增量与每次工具调用及结果
 - **会话持久化**：JSONL 追加、`--resume` 原样回放（支持压缩边界续接）
 
-V7 已交付 0.7.1；路线图 V7+ 待做：TUI、session 切换。
+V7 已交付 0.7.2；路线图 V7+ 待做：TUI、session 切换。权限判定待修项见 [docs/Bug_V7.md](docs/Bug_V7.md)。
 
 ## 安全模型
 

@@ -161,10 +161,38 @@ describe("runQuery（mock LLM 的 golden 场景）", () => {
     ).toBe(true);
   });
 
-  it("超过 maxIterations 兜底返回", async () => {
+  it("超过 maxIterations 且末轮仍调工具 → 收尾轮纯文本给结论", async () => {
     const fake = new FakeClient([
       [
         { type: "tool_use", id: "t1", name: "echo", input: { text: "x" } },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text", text: "最终结论" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client: fake,
+      tools: [echoTool],
+      maxIterations: 1,
+    });
+    // 工具轮 + 收尾轮；reply 是收尾轮结论而非末轮工具前的片段
+    expect(r.iterations).toBe(2);
+    expect(r.reply).toBe("最终结论");
+    // 收尾轮请求不带工具（强制纯文本给结论）
+    expect(fake.toolSpecs[1]).toEqual([]);
+  });
+
+  it("收尾轮仍调工具 → 以当前文本结束（有界，不无限循环）", async () => {
+    const fake = new FakeClient([
+      [
+        { type: "tool_use", id: "t1", name: "echo", input: { text: "x" } },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text", text: "部分文本" },
+        { type: "tool_use", id: "t2", name: "echo", input: { text: "y" } },
         { type: "done", stopReason: "tool_use" },
       ],
     ]);
@@ -173,7 +201,8 @@ describe("runQuery（mock LLM 的 golden 场景）", () => {
       tools: [echoTool],
       maxIterations: 1,
     });
-    expect(r.iterations).toBe(1);
+    expect(r.iterations).toBe(2);
+    expect(r.reply).toBe("部分文本"); // 收尾轮无工具可执行，只保留该轮文本
   });
 });
 
@@ -293,12 +322,47 @@ describe("runQuery V3 system 注入 + added 契约", () => {
       system: "你是助手",
     });
 
-    // 请求首条是 system
+    // 请求首条是 system；L1 预算提示已注入（默认 25 轮），原 system 前缀保留
     const first = fake.calls[0]!;
-    expect(first[0]).toEqual({ role: "system", content: "你是助手" });
+    expect(first[0]).toMatchObject({ role: "system" });
+    const sysText = first[0]!.content as string;
+    expect(sysText).toContain("你是助手");
+    expect(sysText).toContain("迭代预算");
+    expect(sysText).toContain("最多还有约 25 轮");
+    expect(sysText.indexOf("你是助手")).toBe(0); // 预算提示追加在后，稳定前缀在前
     // 返回/持久化消息不含 system
     expect(r.messages.some((m) => m.role === "system")).toBe(false);
     expect(r.added.some((m) => m.role === "system")).toBe(false);
+  });
+
+  it("L1 预算提示随 maxIterations 变化（子 agent 场景：12 轮）", async () => {
+    const fake = new FakeClient([
+      [
+        { type: "text", text: "done" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    await runQuery([{ role: "user", content: "ping" }], {
+      client: fake,
+      tools: [echoTool],
+      system: "你是 explore 子 agent",
+      maxIterations: 12,
+    });
+    const first = fake.calls[0]![0]!;
+    const sysText = first.content as string;
+    expect(sysText).toContain("最多还有约 12 轮");
+    expect(sysText).toContain("你是 explore 子 agent");
+  });
+
+  it("无 system 时请求首条就是用户消息（无预算提示）", async () => {
+    const fake = new FakeClient([
+      [
+        { type: "text", text: "ok" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    await runQuery([{ role: "user", content: "hi" }], { client: fake, tools: [echoTool] });
+    expect(fake.calls[0]![0]).toEqual({ role: "user", content: "hi" });
   });
 
   it("initial 里的 system 消息被过滤（防御）", async () => {
@@ -696,5 +760,88 @@ describe("runQuery 动态工具（V5 决策 B3）", () => {
       await manager.closeAll();
       await srv.close();
     }
+  });
+});
+
+describe("runQuery V7 空结论兜底（空 completion 有界重试）", () => {
+  it("前两次空完成 → 重试后第三次出文本", async () => {
+    const fake = new FakeClient([
+      [{ type: "done", stopReason: "end_turn" }], // 空完成 #1
+      [{ type: "done", stopReason: "end_turn" }], // 空完成 #2（重试）
+      [
+        { type: "text", text: "ok" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client: fake,
+      tools: [echoTool],
+    });
+    expect(r.reply).toBe("ok");
+    expect(fake.calls.length).toBe(3); // 初始 + 2 次空重试
+  });
+
+  it("一直空 → 空重试耗尽 + 收尾轮仍空 → 有界放弃：返回空 reply，不无限循环", async () => {
+    const fake = new FakeClient([
+      [{ type: "done", stopReason: "end_turn" }],
+      [{ type: "done", stopReason: "end_turn" }],
+      [{ type: "done", stopReason: "end_turn" }],
+      [{ type: "done", stopReason: "end_turn" }],
+    ]);
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client: fake,
+      tools: [echoTool],
+    });
+    expect(r.reply).toBe("");
+    // MAX_EMPTY_RETRIES=2 → 初始 + 2 次重试 + 1 次收尾轮（无工具）后放弃
+    expect(fake.calls.length).toBe(4);
+  });
+
+  it("空重试耗尽 → 收尾轮提示给结论 → 得出文本（不带工具）", async () => {
+    const fake = new FakeClient([
+      [{ type: "done", stopReason: "end_turn" }],
+      [{ type: "done", stopReason: "end_turn" }],
+      [{ type: "done", stopReason: "end_turn" }],
+      [
+        { type: "text", text: "最终结论" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client: fake,
+      tools: [echoTool],
+    });
+    expect(r.reply).toBe("最终结论");
+    // 初始 + 2 次空重试 + 第 3 次空（耗尽，转收尾）+ 收尾轮
+    expect(fake.calls.length).toBe(4);
+    // 收尾轮请求不带工具
+    expect(fake.toolSpecs[3]).toEqual([]);
+  });
+
+  it("空完成 + 有后台汇总 → 优先收集后台结果，不进入空重试", async () => {
+    const fake = new FakeClient([
+      [{ type: "done", stopReason: "end_turn" }], // 空完成，但有后台任务刚结束
+      [
+        { type: "text", text: "收尾" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    let collected = false;
+    let backgroundCalls = 0;
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client: fake,
+      tools: [echoTool],
+      onBackgroundDone: async () => {
+        backgroundCalls++;
+        if (backgroundCalls === 1) {
+          collected = true;
+          return ["后台: done"];
+        }
+        return []; // 汇总只能收集一次，之后为新一轮流让路
+      },
+    });
+    expect(collected).toBe(true); // 后台汇总被收集注入（第二轮模型收尾）
+    expect(r.reply).toBe("收尾");
+    expect(fake.calls.length).toBe(2);
   });
 });

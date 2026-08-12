@@ -20,11 +20,13 @@ type Thoroughness = "quick" | "medium" | "very thorough";
 /** 只读工具集：子 agent 只能读，绝不写（不含 write/edit/bash/remember）。 */
 const READONLY_TOOLSET: Tool[] = [repoMapTool, globTool, grepTool, readTool];
 
-/** thoroughness → 子查询最大轮数（学 Claude Code EXPLORE_AGENT 的调用方深度声明）。 */
+/** thoroughness → 子查询最大轮数（学 Claude Code EXPLORE_AGENT 的调用方深度声明）。
+ *  0.7.2 上调 medium/very thorough：实测 explore 子 agent 常在 8 轮内只完成取证、来不及给结论
+ *  （query.ts 收尾轮是兜底，这里再留足取证余量，深任务尽量自然完成）。 */
 const MAX_ITERATIONS: Record<Thoroughness, number> = {
   quick: 4,
-  medium: 8,
-  "very thorough": 12,
+  medium: 12,
+  "very thorough": 16,
 };
 
 const schema = z.object({

@@ -266,8 +266,12 @@ describe("M4 headless（--print + --json 契约）", () => {
     );
     expect(res.code).toBe(0);
     const json = JSON.parse(res.stdout);
-    expect(json.turns).toBe(2);
-    expect(json.tools).toHaveLength(2);
+    // 0.7.2 收尾轮：预算撞顶且模型仍在调工具 → 多跑一轮纯文本收尾（有界，只多一轮）。
+    // 本例 mock 永远调工具 → 2 轮工具循环 + 1 轮收尾 = 3；收尾轮工具池已清空，
+    // read_file 走「未知工具」回填并记入轨迹 → 3 条。
+    expect(json.turns).toBe(3);
+    expect(json.tools).toHaveLength(3);
+    expect(json.tools[2]).toMatchObject({ result: "未知工具: read_file" });
   });
 
   it("无 API key → 退出码 1 且 stderr 提示（不输出 JSON）", async () => {

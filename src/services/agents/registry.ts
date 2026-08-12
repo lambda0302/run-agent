@@ -45,12 +45,12 @@ export function builtinAgentTypes(): AgentTypeDef[] {
     },
     {
       name: "explore",
-      description: "只读探索：repo_map/glob/grep/read_file，thoroughness 由调用方深度决定（默认 medium=8 轮）",
+      description: "只读探索：repo_map/glob/grep/read_file，thoroughness 由调用方深度决定（默认 medium=12 轮）",
       resolveTools: () => [...READONLY_TOOLSET],
       system:
         "你是只读探索子 agent。只能读/搜项目（repo_map/glob/grep/read_file），绝不能改文件或执行命令。" +
         "目标是回答调用方的探索问题，返回结论与关键位置。",
-      maxIterations: 8,
+      maxIterations: 12,
     },
     {
       // V7 决策 D（0.7.1）：对抗性验证专家——证据式 VERDICT 契约，工具集无写工具 + 专门权限策略

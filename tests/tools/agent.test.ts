@@ -57,7 +57,7 @@ describe("AgentRegistry + 内置类型（V7 决策 B）", () => {
     const def = registry.get("explore")!;
     const tools = def.resolveTools(() => []);
     expect(tools.map((t) => t.name).sort()).toEqual(["glob", "grep", "read_file", "repo_map"]);
-    expect(def.maxIterations).toBe(8);
+    expect(def.maxIterations).toBe(12);
     expect(def.system).toContain("只读");
   });
 
@@ -83,6 +83,32 @@ describe("agent 工具（V7 决策 A2）", () => {
     const r = await tool.call({ description: "x", prompt: "y", agentType: "nope" });
     expect(r.result).toContain("未知 agent 类型");
     expect(r.result).toContain("general-purpose");
+  });
+
+  it("描述动态列出全部可委派类型（内置 + 自定义）——模型不用去文件系统猜类型", () => {
+    const registry = new AgentRegistry(builtinAgentTypes());
+    registry.register({
+      name: "qa",
+      description: "代码审查",
+      resolveTools: () => [],
+    });
+    const tool = makeAgentTool({
+      client: new FakeClient([]),
+      registry,
+      parentTools: () => [echoTool],
+    });
+    // 内置三类型 + 自定义 qa 都出现在 description，模型可直接 agentType: "qa"
+    expect(tool.description).toContain("general-purpose");
+    expect(tool.description).toContain("explore");
+    expect(tool.description).toContain("verification");
+    expect(tool.description).toContain("qa");
+    // 未知自定义类型不注册 → 不进描述
+    const bare = makeAgentTool({
+      client: new FakeClient([]),
+      registry: new AgentRegistry(builtinAgentTypes()),
+      parentTools: () => [echoTool],
+    });
+    expect(bare.description).not.toContain("qa");
   });
 
   it("前台：await runAgent → 回填 [<类型> 结论] + reply", async () => {
@@ -161,6 +187,34 @@ describe("agent 工具（V7 决策 A2）", () => {
     });
     await tool.call({ description: "sub", prompt: "do", model: "claude-sonnet-5" });
     expect(makeModelClient).toHaveBeenCalledWith("claude-sonnet-5");
+  });
+
+  it("继承父级 checkPermission 时包 wrap：子 agent 权限申请带来源标签（弹窗可分辨）", async () => {
+    const fake = new FakeClient([
+      [
+        { type: "tool_use", id: "t1", name: "echo", input: { text: "hi" } },
+        { type: "text", text: "done" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    const sources: Array<string | undefined> = [];
+    const parentCp = async (
+      _tool: Tool,
+      _input: unknown,
+      source?: string,
+    ): Promise<"allow"> => {
+      sources.push(source);
+      return "allow";
+    };
+    const tool = makeAgentTool({
+      client: fake,
+      registry: new AgentRegistry(builtinAgentTypes()),
+      parentTools: () => [echoTool],
+      checkPermission: parentCp,
+    });
+    await tool.call({ description: "sub", prompt: "用 echo 回一句话" });
+    // 子查询内模型调 echo 工具 → 权限检查触发 → 父级 checkPermission 收到来源标签
+    expect(sources).toContain("子 agent: general-purpose");
   });
 
   it("后台：spawn 返回可寻址占位，任务注册进 manager", async () => {

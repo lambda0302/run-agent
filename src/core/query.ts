@@ -77,6 +77,10 @@ export interface RunQueryResult {
 
 const DEFAULT_MAX_ITERATIONS = 25;
 const DEFAULT_MAX_RETRIES = 2;
+// V7 空结论兜底：flash 模型（deepseek-v4 等）偶发返回完全空的完成（end_turn、无文本、无工具
+// 调用）。直接接受会产出空「[explore 结论]」。有界重试 + 短退避，不影响正常完成路径。
+const MAX_EMPTY_RETRIES = 2;
+const EMPTY_RETRY_DELAY_MS = 400;
 
 function isTransientError(e: unknown): boolean {
   if (!(e instanceof Error)) return true;
@@ -92,6 +96,15 @@ function isTransientError(e: unknown): boolean {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * L1 预算提示：把迭代轮数上限告诉模型（Claude Code 式「模型知情」）——模型据此主动规划
+ * 收尾，而不是被看不见的轮数墙硬切（子 agent 空结论/半截结论根因）。预算耗尽时收尾轮会
+ * 停用工具并强制纯文本结论，这里提前告知，让模型自己提前收尾（质量更高）。
+ */
+function withBudgetHint(system: string, maxIterations: number): string {
+  return `${system}\n\n## 迭代预算（重要）\n本次任务你最多还有约 ${maxIterations} 轮工具调用循环（每轮可调用多个工具，含当前轮）。请按任务复杂度主动规划：证据足够或结论可得出时就及时收尾并给出回答，不要把轮数全花在取证/验证上。若你到轮数上限仍在调用工具，系统会停止放行工具并强制你以纯文本给出最终结论——在那之前自行收尾通常质量更高。`;
+}
+
+/**
  * ReAct loop：stream → 收集 text/tool_use → 按 stopReason 分流：
  *   end_turn 结束；tool_use 执行工具（只读并行/写串行 + 权限校验）回填后继续；
  *   max_tokens 追加提示续跑；error/transient 错误重试或简单恢复。
@@ -103,6 +116,9 @@ export async function runQuery(
   // system 只进请求，不污染持久化/返回的对话
   const messages: LLMMessage[] = initial.filter((m) => m.role !== "system");
   const maxIterations = opts.maxIterations ?? DEFAULT_MAX_ITERATIONS;
+  // L1 预算提示：把轮数上限注入 system（模型知情 → 主动规划收尾）。compact 摘要等子请求
+  // 仍用原始 opts.system（短任务不需要预算提示）。
+  const system = opts.system ? withBudgetHint(opts.system, maxIterations) : undefined;
   const envRetries = Number(process.env.RUN_AGENT_MAX_RETRIES);
   const maxRetries =
     opts.maxRetries ??
@@ -114,6 +130,10 @@ export async function runQuery(
   let spillSeq = 0;
   let iterations = 0;
   let reply = "";
+  let emptyRetries = 0;
+  // V7 收尾轮标志：预算耗尽/空重试耗尽后置位，下一轮清空工具、明示模型给最终结论，
+  // 保证 reply 是真正结论而非末轮工具调用前的片段（子 agent 空结论/半截结论根因）。
+  let finalizing = false;
   // V6 决策 D：跨全部迭代的工具轨迹（headless JSON 审计用）
   const toolCalls: ToolTrace[] = [];
 
@@ -123,7 +143,7 @@ export async function runQuery(
     added.push(m);
   };
 
-  while (iterations < maxIterations) {
+  while (iterations < maxIterations || finalizing) {
     iterations++;
 
     // V7 决策 C2：外部消息注入（SendMessage 送达）——迭代边界取 pending，非空注入为新的
@@ -162,8 +182,9 @@ export async function runQuery(
       }
     }
 
-    // V5 决策 B3：工具 spec 每轮重建（MCP 工具按需连接后动态注入下一轮）
-    const toolSpecs = toToolSpecs(getTools());
+    // V5 决策 B3：工具 spec 每轮重建（MCP 工具按需连接后动态注入下一轮）。
+    // 收尾轮（finalizing）不给任何工具——强制模型以纯文本给出最终结论。
+    const toolSpecs = toToolSpecs(finalizing ? [] : getTools());
 
     // V5 决策 C：流式执行器——tool_use block 一完整就 addTool 入队执行，不必等响应完结。
     // 每次 stream 尝试新建一个：transient 重试/反应式压缩会丢弃旧尝试的已收集增量。
@@ -189,7 +210,8 @@ export async function runQuery(
     for (;;) {
       // 工具池传函数（getTools）：每轮解析，MCP 工具同轮连接后后续 block 也能找到
       executor = new StreamingToolExecutor({
-        tools: getTools,
+        // 收尾轮清空工具池：模型若仍发 tool_use 会走「未知工具」路径，绝不执行副作用
+        tools: finalizing ? () => [] : getTools,
         ...(opts.checkPermission ? { checkPermission: opts.checkPermission } : {}),
         ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
         ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
@@ -199,8 +221,8 @@ export async function runQuery(
       });
       try {
         // system 拼到请求消息数组首条（不进 messages，适配器已会抽顶层/内联）
-        const requestMessages: LLMMessage[] = opts.system
-          ? [{ role: "system", content: opts.system }, ...messages]
+        const requestMessages: LLMMessage[] = system
+          ? [{ role: "system", content: system }, ...messages]
           : messages;
         for await (const ev of opts.client.stream(requestMessages, {
           tools: toolSpecs,
@@ -328,22 +350,71 @@ export async function runQuery(
           continue;
         }
       }
+      // V7 空结论兜底：end_turn 且无文本、无工具调用 = 空 completion（flash 模型偶发）。
+      // 有界重试 + 短退避；耗尽仍空才返回（上层 agent 工具再给「子 agent 空结论」提示）。
+      // 放 onBackgroundDone 之后：有后台汇总时优先收集，不被空重试循环吞掉。空完成无工具
+      // 入队，跳过 getResults 安全；continue 走 while 顶部重新 stream（下一轮 executor 重建）。
+      if (textParts.length === 0 && toolUses.length === 0) {
+        if (emptyRetries < MAX_EMPTY_RETRIES) {
+          emptyRetries++;
+          await sleep(EMPTY_RETRY_DELAY_MS);
+          continue;
+        }
+        // V7 空结论兜底增强：重试耗尽仍空 → 做一次收尾轮（无工具、明示给结论），
+        // 仍空才放弃返回（上层 agent 工具再给「子 agent 空结论」提示）。有界：只多一轮。
+        if (!finalizing) {
+          finalizing = true;
+          pushConversation({
+            role: "user",
+            content: "[你刚才未输出任何内容，请直接给出你的结论或回答，不要再调用任何工具]",
+          });
+          continue;
+        }
+      }
       // end_turn 下模型未请求工具（toolUses 应为空）；即便异常非空也保持原语义返回
       return { messages, reply, iterations, added, compacts, toolCalls };
     }
 
     if (stopReason === "tool_use") {
-      continue;
+      // 预算内：继续工具循环
+      if (iterations < maxIterations) continue;
+      // V7 收尾轮（核心修复）：预算耗尽且模型仍在调工具 → 清空工具、明示给最终结论。
+      // 否则 runQuery 返回的 reply 只剩末轮工具调用前的文本片段——explore 子 agent 常把
+      // 8 轮全花在取证上、从没进入「给结论」阶段，这就是子 agent 空结论/半截结论的根因
+      //（见 subagent-task-1.jsonl：末轮是「Let me get exact line numbers… + grep」）。
+      if (!finalizing) {
+        finalizing = true;
+        pushConversation({
+          role: "user",
+          content: "[工具轮数已耗尽，请立即给出最终结论，不要再调用任何工具]",
+        });
+        continue;
+      }
+      // 收尾轮仍调了工具 → 以当前文本结束（有界，绝不无限循环）
+      return { messages, reply, iterations, added, compacts, toolCalls };
     }
 
     if (stopReason === "max_tokens") {
       // V1 无 compact：截断时追加提示继续，让模型把话说完（已执行的工具结果已回填）
       pushConversation({ role: "user", content: "[输出被截断，请继续完成当前任务]" });
-      continue;
+      if (!finalizing) {
+        // 预算耗尽且被截断 → 下一轮转收尾（否则 reply 是被截断的半截文本）
+        if (iterations >= maxIterations) finalizing = true;
+        continue;
+      }
+      // 收尾轮仍被截断 → 有界返回（防 while(finalizing) 永不退出的死循环）
+      return { messages, reply, iterations, added, compacts, toolCalls };
     }
 
     // stopReason === "error"
     pushConversation({ role: "user", content: "[模型返回错误，请重试]" });
+    if (!finalizing) {
+      // 预算耗尽且出错 → 下一轮转收尾
+      if (iterations >= maxIterations) finalizing = true;
+      continue;
+    }
+    // 收尾轮仍出错 → 有界返回
+    return { messages, reply, iterations, added, compacts, toolCalls };
   }
 
   return { messages, reply, iterations, added, compacts, toolCalls };
