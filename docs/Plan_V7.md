@@ -11,7 +11,7 @@
 
 **前置核验(V0–V6 实施状态,2026-08-12)**:
 
-- **V7 0.7.0 已发布**:npm latest = 0.7.0;commit(见 git log)+ tag `v0.7.0`;CI 3 OS × Node 20/22/24 全绿。多 Agent 编排落地——`agent` 工具 + 协调者三件套(send_message/task_stop)+ `--coordinator` + 自定义 agent 类型(frontmatter)。文档 `docs/agents.md`;Bug 记录无(V7-0.x 未发现,如有归入 `docs/Bug_V7.md`)。
+- **V7 0.7.0 已发布**:npm latest = 0.7.0;commit `d28b254`(V7 主体)+ tag `v0.7.0`;CI 3 OS × Node 20/22/24 全绿。多 Agent 编排落地——`agent` 工具 + 协调者三件套(send_message/task_stop)+ `--coordinator` + 自定义 agent 类型(frontmatter)。文档 `docs/agents.md`;Bug 记录无(V7-0.x 未发现,如有归入 `docs/Bug_V7.md`)。
 - **V6(0.6.0)已发布**:npm latest = 0.6.0;commit `19d0195`(V6 主体)+ `59dd636`(V6-3 macOS pathInCwd 修复);tag `v0.6.0`;CI 3 OS × Node 20/22/24 9 job 全绿。Bug 记录 `docs/Bug_V6.md`(3 条)。
 - **V6 DoD 仅剩「真实模型手动验证(需 key)」**:hooks 触发 / skill 激活 / headless 全链路——不是代码缺口,同 V4/V5 列为每个版本验收尾项。
 - **0.4.1 `explore` 子 agent 是 V7 的种子**:已实现「嵌套 runQuery + 只读工具集 + 权限继承 + 上下文独立 + thoroughness」,注释明确「**后台运行与模型选择留到 V7(泛化为 Agent 工具)**」;`docs/Plan_V6.md` §5 交接段同义标注。V7 把它泛化成 `agent` 工具 + 类型注册表。
