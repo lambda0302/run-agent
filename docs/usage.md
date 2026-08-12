@@ -35,6 +35,7 @@ run-agent
 | `--print <p>`        | headless：跑完这条 prompt 一次就退出（与位置参数 prompt 互斥）                    |
 | `--json`             | headless 结构化输出：stdout 只出 JSON，人类日志去 stderr（需 `--print`）          |
 | `--max-turns <n>`    | headless 的 ReAct 循环轮数上限（默认 25）                                         |
+| `--coordinator`      | 0.7.0：协调者模式——注入协调者 system，用 `agent`/`send_message`/`task_stop` 编排子 agent |
 
 ## 配置优先级
 
@@ -96,6 +97,7 @@ run-agent> /help
 - `/clear`：清空上下文 · `/compact`：压缩上下文
 - `/plan`：进入只读计划模式 · `/mcp`：查看/连接 MCP server
 - `/skills`：列出技能 · `/commands`：列出自定义命令（`/技能名`、`/命令名` 直接触发）
+- `/tasks`（0.7.0，仅协调者/交互 REPL 后台任务）：列出运行中的后台子 agent（task_id / 类型 / 状态 / prompt 摘要）
 - `/help`：帮助 · `/exit` / `/quit`：退出
 
 ## 会话与续接
@@ -150,6 +152,12 @@ run-agent --print "…" --json --max-turns 5               # 限制 ReAct 循环
 - one-shot 无交互确认：写/执行类工具在 `default` 模式降级 `deny`，`--mode acceptEdits` 时
   cwd 内写免确认 `allow`。
 - Hooks 在 headless 下同样触发（`SessionStart`/`Stop`/`PreToolUse` 等）。
+
+## 多 Agent（0.7.0）
+
+`run-agent --coordinator` 进入协调者模式：主 agent 用 `agent` 工具把跨模块任务拆成子任务委派给
+specialist（`run_in_background=true` 并行），`send_message` 补充信息、`task_stop` 止损、轮末自动汇总。
+详见 [agents.md](agents.md)。
 
 ## 可编程化（0.6.0）
 

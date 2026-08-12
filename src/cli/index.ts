@@ -37,6 +37,13 @@ import { RunAgentError } from "../utils/errors.js";
 import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
 import type { AgentOptions } from "./repl.js";
+import type { PermissionBridge } from "../core/run_agent.js";
+import { AgentRegistry, builtinAgentTypes } from "../services/agents/registry.js";
+import { loadAgents } from "../services/agents/loader.js";
+import { BackgroundTaskManager } from "../services/agents/team/registry.js";
+import { makeAgentTool } from "../tools/agent.js";
+import { makeSendMessageTool } from "../tools/send_message.js";
+import { makeTaskStopTool } from "../tools/task_stop.js";
 
 const program = new Command();
 
@@ -65,6 +72,10 @@ program
   )
   .option("-t, --trust", "trust the current project directory (skips the Trust prompt)")
   .option("--bare", "disable CLAUDE.md memory and dynamic context injection")
+  .option(
+    "--coordinator",
+    "V7: coordinator mode — inject the coordinator system prompt (delegate to specialist sub-agents)",
+  )
   .option("--context-window <n>", "context window size in tokens (defaults per provider)")
   .option(
     "--print <prompt>",
@@ -167,6 +178,7 @@ interface CliOpts {
   mode?: string;
   trust?: boolean;
   bare?: boolean;
+  coordinator?: boolean;
   contextWindow?: number;
   print?: string;
   json?: boolean;
@@ -290,6 +302,8 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     cwd,
     isTrusted,
     bare: Boolean(opts.bare),
+    // V7 决策 C1：--coordinator 注入协调者段落（动态段；--bare 已整体跳过）
+    ...(opts.coordinator ? { coordinator: true } : {}),
     ...(planCtrl ? { hasPlanMode: true } : {}),
     ...(mcpManager
       ? {
@@ -342,11 +356,58 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     hookManager = new HookManager(hooksConfig, { cwd, sessionFile });
   }
 
-  // V5 决策 B4：只读判定闭包 = 内置只读 ∪ explore ∪ MCP readOnlyHint（权限管线并入）
+  // V5 决策 B4：只读判定闭包 = 内置只读 ∪ explore ∪ 协调者三件套 ∪ MCP readOnlyHint（权限管线并入）
+  // agent/send_message/task_stop 无文件/外部副作用（只改内存状态），归只读 → default 免确认
   const readOnlyNames = (name: string): boolean =>
-    isBuiltinReadOnlyTool(name) || name === "explore" || (mcpManager?.isReadOnly(name) ?? false);
+    isBuiltinReadOnlyTool(name) ||
+    name === "explore" ||
+    name === "agent" ||
+    name === "send_message" ||
+    name === "task_stop" ||
+    (mcpManager?.isReadOnly(name) ?? false);
 
-  // 静态工具一次装配（含 mcp_connect）；MCP 已连接工具每轮动态追加（函数池，决策 B3）
+  // ── V7 决策 A/B：agent 注册表 + 后台任务注册表 + 权限桥 + agent 工具 ──────
+  const agentRegistry = new AgentRegistry(builtinAgentTypes());
+  // V7 决策 B2：自定义 frontmatter 类型合并（项目级仅 Trust 加载；内置优先同名忽略）
+  const { agents: customAgents, skipped: skippedAgents } = loadAgents(cwd, isTrusted);
+  for (const def of customAgents) {
+    if (!agentRegistry.register(def)) {
+      process.stderr.write(`⚠ 自定义 agent 类型 "${def.name}" 与内置重名，已忽略\n`);
+    }
+  }
+  if (skippedAgents.length > 0) {
+    process.stderr.write(
+      `⚠ 跳过 ${skippedAgents.length} 个非法 agent 定义: ${skippedAgents.join(", ")}\n`,
+    );
+  }
+  const backgroundTasks = new BackgroundTaskManager();
+  const permissionBridge: PermissionBridge = { checkPermission: undefined };
+  // 父级工具池延迟绑定：agent 工具创建时 baseTools 尚未存在；agentTools() 每轮刷新 poolRef
+  let poolRef: () => Tool[] = () => [];
+  const agentTool = makeAgentTool({
+    client,
+    ...(system !== undefined ? { system } : {}),
+    ...(contextWindow ? { contextWindow } : {}),
+    // 子查询权限：主循环 checkPermission（bridge 写入，前台可弹窗）> exploreCheckPermission（ask→deny 兜底）。
+    // bridge 由 repl.ts/runOneShot 构造完 checkPermission 后写入（见 repl.ts）；headless 不弹窗。
+    checkPermission: (tool, input) =>
+      permissionBridge.checkPermission
+        ? permissionBridge.checkPermission(tool, input)
+        : exploreCheckPermission(tool, input),
+    makeModelClient: (m) =>
+      createClient(cfg.provider, {
+        ...(apiKey ? { apiKey } : {}),
+        model: m,
+        ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
+      }),
+    registry: agentRegistry,
+    backgroundTasks,
+    resultsDir: path.dirname(sessionFile),
+    transcriptDir: path.dirname(sessionFile),
+    parentTools: () => poolRef(),
+  });
+
+  // 静态工具一次装配（含 mcp_connect + agent 委派原语）；MCP 已连接工具每轮动态追加（函数池，决策 B3）
   const baseTools = buildTools({
     cwd,
     isTrusted,
@@ -357,11 +418,17 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ...(planCtrl ? { planMode: planCtrl } : {}),
     ...(mcpManager ? { mcpConnect: makeMcpConnectTool(mcpManager) } : {}),
     ...(skillRegistry ? { skills: skillRegistry } : {}),
+    agentTool,
+    sendMessageTool: makeSendMessageTool(backgroundTasks),
+    taskStopTool: makeTaskStopTool(backgroundTasks),
   });
-  // V6 决策 B2：活跃技能 allowed-tools 过滤（本 turn 剩余工具 = allowed-tools ∩ 池 ∪ 内置只读）
+  // V6 决策 B2：活跃技能 allowed-tools 过滤（本 turn 剩余工具 = allowed-tools ∩ 池 ∪ 内置只读）；
+  // V7 决策 B：每轮刷新 poolRef（agent 工具子查询解析父级池，含 MCP 已连接工具）
   const agentTools = (): Tool[] => {
     const pool = [...baseTools, ...(mcpManager?.getConnectedTools() ?? [])];
-    return skillRegistry ? skillRegistry.filterToolsForActiveSkill(pool) : pool;
+    const filtered = skillRegistry ? skillRegistry.filterToolsForActiveSkill(pool) : pool;
+    poolRef = () => filtered;
+    return filtered;
   };
 
   // V6 决策 D：--max-turns <n> → ReAct 循环轮数上限（解析失败警告并忽略）
@@ -387,6 +454,10 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ...(hookManager ? { hookManager } : {}),
     ...(skillRegistry ? { skillRegistry } : {}),
     ...(commands ? { commands } : {}),
+    // V7 决策 A6：后台任务注册表（/tasks 查看）——交互 REPL 才装配；headless one-shot 无任务列表
+    ...(backgroundTasks ? { backgroundTasks } : {}),
+    // V7 决策 A4：权限桥——REPL/one-shot 构造完 checkPermission 后写入，agent 工具子查询读取
+    permissionBridge,
     // 决策 8：超大工具结果落盘到 session 同目录（r0.txt/r1.txt…），消息里只留指针
     resultsDir: path.dirname(sessionFile),
   };

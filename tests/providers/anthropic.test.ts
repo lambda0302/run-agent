@@ -145,4 +145,25 @@ describe("createAnthropicClient（流式）", () => {
       ],
     });
   });
+
+  it("signal 透传：stream opts.signal 作为 create 第二参数（V7 决策 C3，TaskStop 中断 in-flight）", async () => {
+    mockClient.messages.create.mockResolvedValue(
+      streamOf([
+        {
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: {},
+        },
+      ]),
+    );
+    const client = createAnthropicClient({ apiKey: "test-key" });
+    const ac = new AbortController();
+    for await (const _ of client.stream([{ role: "user", content: "ping" }], { signal: ac.signal })) {
+      void _;
+    }
+    expect(mockClient.messages.create).toHaveBeenCalledWith(
+      expect.objectContaining({ stream: true }),
+      expect.objectContaining({ signal: ac.signal }),
+    );
+  });
 });

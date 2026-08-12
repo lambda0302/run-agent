@@ -101,13 +101,17 @@ export function createOpenAILikeClient(
       function: { name: t.name, description: t.description, parameters: t.inputSchema },
     }));
 
-    const res = await client.chat.completions.create({
-      model,
-      messages: toOpenAIMessages(messages),
-      ...(openaiTools && openaiTools.length ? { tools: openaiTools } : {}),
-      stream: true,
-      ...(opts?.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
-    });
+    const res = await client.chat.completions.create(
+      {
+        model,
+        messages: toOpenAIMessages(messages),
+        ...(openaiTools && openaiTools.length ? { tools: openaiTools } : {}),
+        stream: true,
+        ...(opts?.maxTokens !== undefined ? { max_tokens: opts.maxTokens } : {}),
+      },
+      // V7 决策 C3：abort 透传——TaskStop 中断 in-flight 请求（SDK 抛 AbortError → 上层 isAbortError）
+      opts?.signal ? { signal: opts.signal } : undefined,
+    );
 
     // OpenAI 流式把 tool_calls 按 index 分片传（name/arguments 跨 chunk 增量）
     const calls = new Map<number, { id: string; name: string; args: string }>();

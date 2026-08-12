@@ -5,6 +5,8 @@ import type { SystemContext } from "../core/context.js";
 import type { PermissionCheckResult } from "../core/execute.js";
 import { runQuery } from "../core/query.js";
 import type { RunQueryResult } from "../core/query.js";
+import type { PermissionBridge } from "../core/run_agent.js";
+import type { BackgroundTaskManager } from "../services/agents/team/registry.js";
 import {
   hasPermissionsToUseTool,
   inputPath,
@@ -60,6 +62,10 @@ export interface AgentOptions {
   commands?: CommandRegistry;
   /** 测试注入：readline 输入流（缺省 process.stdin）。生产不传。 */
   input?: NodeJS.ReadableStream;
+  /** V7 决策 A6：后台任务注册表（agent 工具 run_in_background + /tasks 查看）。交互 REPL 才装配。 */
+  backgroundTasks?: BackgroundTaskManager;
+  /** V7 决策 A4：权限桥——本文件构造完 checkPermission 后写入，agent 工具的子查询读取。 */
+  permissionBridge?: PermissionBridge;
 }
 
 const DIM = "\x1b[90m";
@@ -122,8 +128,9 @@ export function createHandlers(emit: (s: string) => void) {
  * 组装 checkPermission：engine 判定 → PreToolUse hook 覆盖 → 对 "ask" 弹交互确认。
  * @param ask 可注入的提问函数——REPL 传 rl.question 复用同一 readline（杜绝双回显）。
  *            不传则用 resolveAsk 的缺省路径（one-shot 时 canPrompt=false 直接 deny，不弹）。
- * @param readOnlyNames 只读判定闭包（V5 决策 B4）。缺省 = 内置只读 ∪ explore；
- *            CLI 装配时并入 MCP readOnlyHint 名（manager.isReadOnly）。plan 下 explore 也放行（内部只用只读工具）。
+ * @param readOnlyNames 只读判定闭包（V5 决策 B4）。缺省 = 内置只读 ∪ explore ∪ agent；
+ *            CLI 装配时并入 MCP readOnlyHint 名（manager.isReadOnly）。plan 下 explore/agent 也放行
+ *            （explore 内部只用只读工具；agent 的 ask 会由内部子查询引擎降级 deny，绝不弹窗）。
  * @param preToolUse V6 决策 A4：PreToolUse hook 回调（HookManager.onPreToolUse）。
  *            engine 判定后执行；hook 决策可覆盖（ask→allow / allow→deny / ask→deny），
  *            但 engine deny 是硬底线不可被 hook 放行。hook deny 的 reason 并入拒绝回填。
@@ -136,7 +143,13 @@ export function makeCheckPermission(
   preToolUse?: (name: string, input: unknown) => Promise<PreToolUseDecision | undefined>,
 ): (tool: Tool, input: unknown) => Promise<PermissionCheckResult> {
   const isReadOnlyName =
-    readOnlyNames ?? ((name: string) => isBuiltinReadOnlyTool(name) || name === "explore");
+    readOnlyNames ??
+    ((name: string) =>
+      isBuiltinReadOnlyTool(name) ||
+      name === "explore" ||
+      name === "agent" ||
+      name === "send_message" ||
+      name === "task_stop");
   return async (tool, input) => {
     const d = hasPermissionsToUseTool(
       tool.name,
@@ -235,6 +248,9 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<Ru
       )
     : undefined;
   const postToolUse = postToolUseHook(opts.hookManager, emit);
+  // V7 决策 A4：子 agent 前台复用父级权限（桥写入；后台由 manager 包装 ask→deny 永不弹窗）。
+  // headless 下 ctx 存在但 ask 未注入 → resolveAsk 走 canPrompt=false 直接 deny，行为不变。
+  if (opts.permissionBridge) opts.permissionBridge.checkPermission = checkPermission;
   opts.skillRegistry?.resetActive(); // V6 决策 B2：one-shot 也是完整 turn，先重置活跃技能
   const result = await runQuery(messages, {
     ...queryOpts(opts, system),
@@ -256,7 +272,7 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<Ru
 
 const HELP = [
   "run-agent REPL — 直接输入 prompt 开始，agent 会读/写/改/搜/执行并汇报。",
-  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入只读计划模式 · /mcp 查看/连接 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /help 帮助 · /exit 退出",
+  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入只读计划模式 · /mcp 查看/连接 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /tasks 查看后台子 agent · /help 帮助 · /exit 退出",
 ].join("\n");
 
 /** V6 决策 B3/C2：内置斜杠命令集合——技能/自定义命令与内置冲突时内置优先。 */
@@ -270,6 +286,7 @@ const BUILTIN_SLASH = new Set([
   "mcp",
   "skills",
   "commands",
+  "tasks",
 ]);
 
 /** 交互式 REPL 主循环。 */
@@ -302,6 +319,8 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
   const checkPermission = opts.ctx
     ? makeCheckPermission(opts.ctx, out, ask, opts.readOnlyNames, preToolUseHook(opts.hookManager))
     : undefined;
+  // V7 决策 A4：子 agent 前台复用父级权限（桥写入；后台由 manager 包装 ask→deny，绝不弹窗）
+  if (opts.permissionBridge) opts.permissionBridge.checkPermission = checkPermission;
   const postToolUse = postToolUseHook(opts.hookManager, gate.emit);
 
   rl.on("SIGINT", () => {
@@ -514,6 +533,23 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
           await appendMessage(opts.sessionFile, res.messages[0]!);
           opts.onCompact?.();
           out.write("已压缩上下文（边界消息已持久化，--resume 将从摘要续起）\n");
+          break;
+        }
+        case "/tasks": {
+          // V7 决策 A6：后台子 agent 任务列表（agent 工具 run_in_background 产生）
+          if (!opts.backgroundTasks) {
+            out.write("当前会话未装配后台任务管理器（仅交互 REPL）\n");
+            break;
+          }
+          const tasks = opts.backgroundTasks.list();
+          if (tasks.length === 0) {
+            out.write("无后台任务（用 agent 工具 run_in_background=true 委派）\n");
+            break;
+          }
+          for (const t of tasks) {
+            const head = t.reply ? preview(t.reply) : "";
+            out.write(`  ${t.id}(${t.type}) ${t.status}${head ? ` — ${head}` : ""}\n`);
+          }
           break;
         }
         case "/plan": {

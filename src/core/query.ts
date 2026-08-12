@@ -7,7 +7,7 @@ import type {
 } from "../providers/types.js";
 import { toToolSpecs } from "../tools.js";
 import type { Tool } from "../tools.js";
-import { isPromptTooLong } from "../utils/errors.js";
+import { isAbortError, isPromptTooLong } from "../utils/errors.js";
 import {
   COMPACT_MIN_MESSAGES,
   computeCompactThreshold,
@@ -51,6 +51,12 @@ export interface RunQueryOptions {
   querySource?: string;
   /** V3 决策 8：超大工具结果落盘目录（缺省不落盘，结果原样进消息列表） */
   resultsDir?: string;
+  /** V7 决策 C2：外部消息注入——每轮迭代开始时调用（SendMessage 送达；子查询 pending 队列取消息）。 */
+  pollExternal?: () => LLMMessage[] | undefined;
+  /** V7 决策 C3：外部 abort（TaskStop）——aborted 后提前结束，reply 保留部分结果。 */
+  signal?: AbortSignal;
+  /** V7 决策 A7：后台任务轮末自动收集——end_turn 返回前调用，有结果注入新 user 轮让模型收尾。 */
+  onBackgroundDone?: () => Promise<string[]>;
 }
 
 export interface RunQueryResult {
@@ -65,6 +71,8 @@ export interface RunQueryResult {
   compacts: number;
   /** V6 决策 D：本轮全部工具调用轨迹（名 + 入参 + 结果[截断 2000] + 权限），headless JSON 用。 */
   toolCalls: ToolTrace[];
+  /** V7 决策 C3：是否因外部 abort（TaskStop）提前结束；aborted 时 reply 是部分结果。 */
+  aborted?: boolean;
 }
 
 const DEFAULT_MAX_ITERATIONS = 25;
@@ -117,6 +125,20 @@ export async function runQuery(
 
   while (iterations < maxIterations) {
     iterations++;
+
+    // V7 决策 C2：外部消息注入（SendMessage 送达）——迭代边界取 pending，非空注入为新的
+    // user 轮并 continue（消息进 added/子 transcript）。放压缩检查前：注入一并参与压缩决策。
+    if (opts.pollExternal) {
+      const ext = opts.pollExternal();
+      if (ext && ext.length > 0) {
+        for (const m of ext) pushConversation(m);
+        continue;
+      }
+    }
+    // V7 决策 C3：外部 abort（TaskStop）——提前结束，保留已产出部分文本（不抛，避免上层当失败）
+    if (opts.signal?.aborted) {
+      return { messages, reply, iterations, added, compacts, toolCalls, aborted: true };
+    }
 
     // 主动压缩：整段历史（含最新 user 请求）估算超阈值 → 摘要 → 单边界消息。
     // compact 摘要请求自身（querySource='compact'）跳过，防递归。
@@ -183,6 +205,8 @@ export async function runQuery(
         for await (const ev of opts.client.stream(requestMessages, {
           tools: toolSpecs,
           ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+          // V7 决策 C3：abort 透传底层 SDK/fetch——TaskStop 中断 in-flight 请求（立即生效）
+          ...(opts.signal ? { signal: opts.signal } : {}),
         })) {
           if (ev.type === "text") {
             textParts.push(ev.text);
@@ -207,6 +231,19 @@ export async function runQuery(
         // 先收尾本尝试已入队的执行：工具可能在错误前已启动，必须等其完成再重试，
         // 否则旧任务残留在后台、onToolResult 会与重试轮交叠。
         await executor.getResults();
+        // V7 决策 C3：AbortError 直接结束——不重试、不进 transient 退避、不进反应式压缩
+        //（否则「停止」被吞掉重跑）。reply 保留本尝试已产出的部分文本。
+        if (isAbortError(e)) {
+          return {
+            messages,
+            reply: textParts.join(""),
+            iterations,
+            added,
+            compacts,
+            toolCalls,
+            aborted: true,
+          };
+        }
         // 0.3.1 反应式压缩：模型报上下文超长 → 强制压缩/硬截断后重试（每轮至多一次，防死循环）
         if (isPromptTooLong(e)) {
           if (!opts.contextWindow || reactiveStage >= 2) throw e;
@@ -280,6 +317,17 @@ export async function runQuery(
     toolCalls.push(...attemptCalls);
 
     if (stopReason === "end_turn") {
+      // V7 决策 A7：后台任务轮末自动收集——有完成结果则注入新 user 轮让模型收尾汇总
+      if (opts.onBackgroundDone) {
+        const summaries = await opts.onBackgroundDone();
+        if (summaries.length > 0) {
+          pushConversation({
+            role: "user",
+            content: `[后台子 agent 结果]\n${summaries.join("\n")}`,
+          });
+          continue;
+        }
+      }
       // end_turn 下模型未请求工具（toolUses 应为空）；即便异常非空也保持原语义返回
       return { messages, reply, iterations, added, compacts, toolCalls };
     }

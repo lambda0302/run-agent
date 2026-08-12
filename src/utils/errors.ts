@@ -1,3 +1,10 @@
+/** V7 决策 C3：是否外部 abort（TaskStop 传播的 AbortError）。
+ * 识别 DOMException / 自定义 name === 'AbortError'（与 isPromptTooLong 同为错误分类，
+ * 但优先级更高：abort 直接结束，不重试、不进反应式压缩）。 */
+export function isAbortError(e: unknown): boolean {
+  return e instanceof Error && e.name === "AbortError";
+}
+
 /** 基础错误类：CLI 层捕获后统一转成退出码与 stderr 输出。 */
 export class RunAgentError extends Error {
   constructor(

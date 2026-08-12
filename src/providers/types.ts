@@ -51,6 +51,8 @@ export interface ToolSpec {
 export interface StreamOptions {
   tools?: ToolSpec[];
   maxTokens?: number;
+  /** V7 决策 C3：外部 abort 信号——透传底层 SDK/fetch，中断 in-flight 请求（TaskStop 立即生效）。 */
+  signal?: AbortSignal;
 }
 
 export interface LLMClient {

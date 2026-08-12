@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.6.0**（Hooks + Skills + 自定义命令 + Headless）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.7.0**（多 Agent 编排：agent 委派 + 协调者三件套 + 自定义 agent 类型）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.6.0
+run-agent --version    # 应输出 0.7.0
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
@@ -325,16 +325,17 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **MCP 接入**（0.5.0）：接入标准协议生态（stdio / HTTP / SSE），配置 `mcp.json` 后按需 `mcp_connect <server>` 连接，MCP 工具（`mcp__server__tool`）与内置工具走同一权限管线；详见 [docs/mcp.md](docs/mcp.md)
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json` / `.run-agent/mcp.json`，防提示注入
 - **流式即时执行**（0.5.0）：工具边流式边并行执行（不必等响应完结），只读并行（上限 10）/ 写串行、结果按原顺序回填
-- **13 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `verify`（跑 tsc/eslint/test 自修）· `enter_plan_mode` / `exit_plan_mode`（Plan 导航）· `SkillTool`（V6，加载技能）+ 配置 MCP 时的 `mcp_connect` 与动态 MCP 工具
+- **16 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `verify`（跑 tsc/eslint/test 自修）· `agent`（委派子任务）· `send_message` / `task_stop`（协调者三件套）· `enter_plan_mode` / `exit_plan_mode`（Plan 导航）· `SkillTool`（V6，加载技能）+ 配置 MCP 时的 `mcp_connect` 与动态 MCP 工具
 - **Hooks**（0.6.0）：五类事件（`PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `Stop`）挂 shell 命令或 HTTP 回调，配置 `settings.json`（用户级 + Trust 项目级）；`PreToolUse` 可返回 `permissionDecision` 覆盖判定（engine deny 硬底线不可放行），`Stop` 输出注入下一轮 system；详见 [docs/hooks.md](docs/hooks.md)
 - **Skills**（0.6.0）：预写专业工作流（`SKILL.md`，frontmatter `name`/`description`/`allowed-tools`），模型用 `SkillTool` 加载执行、或 REPL `/技能名` 直接触发；技能 body 调用时才加载（不塞 token），`allowed-tools` 限制工具（内置只读始终保留）；详见 [docs/skills.md](docs/skills.md)
 - **自定义命令**（0.6.0）：`.md` 模板（`@file` 内联 + 参数追加，走 agent 循环）或 `.py/.js/.ts` 脚本（解释器直跑，注入 `RUN_AGENT_CWD`/`RUN_AGENT_PROMPT`），REPL `/命令名` 触发；详见 [docs/commands.md](docs/commands.md)
 - **Headless**（0.6.0）：`--print <prompt>` 跑一次即退，`--json` 输出结构化结果（stdout 纯 JSON、人类日志去 stderr、工具轨迹含权限判定与截断、退出码 0/1），`--max-turns` 限轮数——可编程调用、对接 CI / 脚本；详见 [docs/usage.md](docs/usage.md#headlessprint--json)
+- **多 Agent 编排**（0.7.0）：`agent` 工具委派子任务（前台阻塞 / 后台并行 `run_in_background`），`send_message` 补充信息、`task_stop` 止损，`--coordinator` 协调者模式拆解→并行委派→汇总核对；自定义 agent 类型（`.run-agent/agents/` frontmatter）；子 agent 权限严格继承、后台永不弹窗；详见 [docs/agents.md](docs/agents.md)
 - **多提供商**：一套抽象对接 Anthropic / OpenAI / OpenAI 兼容 / Ollama
 - **透明**：REPL 里实时看到模型文本增量与每次工具调用及结果
 - **会话持久化**：JSONL 追加、`--resume` 原样回放（支持压缩边界续接）
 
-V6 暂不包含（路线图 V6+）：SkillTool 子 agent 化、local-jsx 命令、多 agent（任务级/后台并发）、TUI、session 切换。
+V7 暂不包含（路线图 V7+）：verification 子 agent（0.7.1）、后台记忆提取双轨（0.7.1）、TUI、session 切换。
 
 ## 安全模型
 

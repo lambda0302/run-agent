@@ -203,6 +203,8 @@ export interface SystemContext {
   /** V6 决策 E2：可用技能清单（名 + description，一行一个）。非空时动态段注入，
    *  让模型知道可调 SkillTool；技能 body 只在调用时加载（不塞 token）。 */
   skills?: string;
+  /** V7 决策 C1：--coordinator 模式——动态段注入协调者段落（优先委派 specialist）。 */
+  coordinator?: boolean;
 }
 
 const STABLE_SYSTEM = `你是 run-agent，一个运行在终端里的编码 agent。
@@ -235,6 +237,16 @@ function formatDynamic(
   if (ctx.skills) {
     // V6 决策 E2：技能清单（一行一列）。只列名+描述，body 调用时加载。
     bits.push(`可用技能（调 SkillTool 加载并执行，或输入 /<技能名> 手动加载）:\n${ctx.skills}`);
+  }
+  if (ctx.coordinator) {
+    // V7 决策 C1：协调者段落——主 agent 仍是完整 agent（协调者 + 兜底执行者），只引导「优先委派」
+    bits.push(
+      "你是协调者。把跨模块任务拆成可并行子任务，用 agent 工具委派 specialist " +
+        "（优先 run_in_background=true 并行，拿 task_id；写类子任务串行委派）。" +
+        "任务运行中如补充信息/修正需求，用 send_message 发给对应 task_id；" +
+        "发现委派错误/任务失控/需求已变，用 task_stop 止损。" +
+        "收齐后汇总：核对每个子任务结论与原始目标，冲突/缺口重新委派或自己补上。",
+    );
   }
   if (hookOutput) {
     // V6 决策 A1：Stop hook 输出注入。标记来源——它是第三方 hook 输出，不是用户指令，

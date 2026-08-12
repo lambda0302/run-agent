@@ -2,6 +2,24 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.7.0] - 2026-08-12
+
+### Added
+
+- **多 Agent 编排**（V7 决策 A/B/C）：`agent` 工具委派子任务，支持前台阻塞与后台
+  （`run_in_background: true`，独立上下文/transcript，轮末自动汇总）。子 agent 复用父级权限
+  （用户 deny / 内置 deny 底线全部生效），**子 agent 永远不能获得超过父级的权限**。
+- **协调者三件套**（V7 决策 C，只装配主 agent）：`send_message`（向运行中后台子 agent 注入
+  user 消息，子查询**迭代边界**送达）/ `task_stop`（AbortController 传播 → 适配器中断
+  in-flight 请求，保留部分文本）。`--coordinator` 注入协调者 system 段落（拆解→并行委派→
+  反馈→止损→汇总核对）。REPL `/tasks` 列出后台任务。
+- **agent 类型**（V7 决策 B）：内置 `general-purpose`（父级全部工具、不含三件套防递归）与
+  `explore`（只读四件套，0.4.1 迁移）；自定义 frontmatter 类型 `.run-agent/agents/<name>.md`
+  （仅 Trust）/ `~/.config/run-agent/agents/<name>.md`（始终），支持 `tools` 白名单 /
+  `system` / `maxIterations` / `model`，同名内置 > 用户 > 项目，非法定义启动告警跳过。
+- **后台永不弹窗**：后台子查询权限 `ask` 一律降级 `deny`（后台轮末汇总时 REPL 不空闲，
+  弹窗会死锁）。详见 [docs/agents.md](docs/agents.md)。
+
 ## [0.6.0] - 2026-08-12
 
 ### Added

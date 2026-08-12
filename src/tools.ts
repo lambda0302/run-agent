@@ -137,6 +137,12 @@ export interface BuildToolsOptions {
   mcpConnect?: Tool;
   /** V6 决策 B2：技能注册表。有技能时装配 SkillTool。 */
   skills?: SkillRegistry;
+  /** V7 决策 A2：agent 工具（子 agent 委派原语）。CLI 装配；子查询工具集由类型注册表解析。 */
+  agentTool?: Tool;
+  /** V7 决策 C2：send_message 工具（协调者三件套之一，向后台子 agent 注入消息）。CLI 装配。 */
+  sendMessageTool?: Tool;
+  /** V7 决策 C3：task_stop 工具（协调者三件套之一，停止后台子 agent）。CLI 装配。 */
+  taskStopTool?: Tool;
 }
 
 /** 运行时装配完整工具集：静态工具 + remember/explore 工厂实例 + plan 导航工具（注入运行时依赖）。 */
@@ -151,6 +157,17 @@ export function buildTools(opts: BuildToolsOptions): Tool[] {
         ...(opts.checkPermission !== undefined ? { checkPermission: opts.checkPermission } : {}),
       }),
     );
+  }
+  // V7 决策 A2：agent 工具追加在 explore 之后（子 agent 委派原语）
+  if (opts.agentTool) {
+    tools.push(opts.agentTool);
+  }
+  // V7 决策 C2/C3：协调者三件套的 send_message/task_stop（与 agent 一起只装配主 agent）
+  if (opts.sendMessageTool) {
+    tools.push(opts.sendMessageTool);
+  }
+  if (opts.taskStopTool) {
+    tools.push(opts.taskStopTool);
   }
   // V5 决策 A4：plan 导航工具追加在后（仅交互 REPL）
   if (opts.planMode) {

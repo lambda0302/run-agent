@@ -163,6 +163,34 @@ describe("buildSystemPrompt（稳定/动态边界）", () => {
     expect(sys!.indexOf("当前时间")).toBeGreaterThan(sys!.indexOf("动态上下文"));
   });
 
+  it("V7 决策 C1：coordinator 注入协调者段落（优先委派 specialist）", async () => {
+    const { home, cwd } = makeHome();
+    const sys = await buildSystemPrompt(
+      { cwd, isTrusted: false, bare: false, coordinator: true },
+      { homeDir: home, date: "d", git: {} },
+    );
+    expect(sys).toContain("你是协调者");
+    expect(sys).toContain("agent 工具委派");
+    expect(sys).toContain("run_in_background=true");
+    // 实际工具名（send_message/task_stop）出现在段落里，供模型正确调用
+    expect(sys).toContain("send_message");
+    expect(sys).toContain("task_stop");
+    // 段落放动态段（分隔符之后）
+    expect(sys!.indexOf("你是协调者")).toBeGreaterThan(sys!.indexOf("动态上下文"));
+    const plain = await buildSystemPrompt(
+      { cwd, isTrusted: false, bare: false },
+      { homeDir: home, date: "d", git: {} },
+    );
+    expect(plain).not.toContain("你是协调者");
+  });
+
+  it("V7 决策 C1：--bare 即使 coordinator 也整体跳过（不注入）", async () => {
+    const { home, cwd } = makeHome();
+    await expect(
+      buildSystemPrompt({ cwd, isTrusted: true, bare: true, coordinator: true }, { homeDir: home }),
+    ).resolves.toBeUndefined();
+  });
+
   it("V6 决策 A1：hookOutput 注入动态段并标注第三方来源；无输出不注入", async () => {
     const { home, cwd } = makeHome();
     const base: Parameters<typeof buildSystemPrompt>[1] = {

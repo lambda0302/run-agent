@@ -137,4 +137,17 @@ describe("createOpenAIClient（function calling 互转）", () => {
       expect.objectContaining({ baseURL: "https://api.deepseek.com/v1", apiKey: "k" }),
     );
   });
+
+  it("signal 透传：stream opts.signal 作为 create 第二参数（V7 决策 C3，TaskStop 中断 in-flight）", async () => {
+    create.mockResolvedValue(streamOf([chunk({ content: "hi" }, "stop")]));
+    const client = createOpenAIClient({ apiKey: "test-key" });
+    const ac = new AbortController();
+    for await (const _ of client.stream([{ role: "user", content: "hi" }], { signal: ac.signal })) {
+      void _;
+    }
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ stream: true }),
+      expect.objectContaining({ signal: ac.signal }),
+    );
+  });
 });

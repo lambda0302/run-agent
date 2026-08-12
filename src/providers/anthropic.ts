@@ -81,14 +81,18 @@ export function createAnthropicClient(options: CreateClientOptions = {}): LLMCli
       input_schema: t.inputSchema as Anthropic.Tool.InputSchema,
     }));
 
-    const res = await client.messages.create({
-      model,
-      max_tokens: opts?.maxTokens ?? 8192,
-      messages: toAnthropicMessages(messages),
-      ...(system ? { system } : {}),
-      ...(anthropicTools && anthropicTools.length ? { tools: anthropicTools } : {}),
-      stream: true,
-    });
+    const res = await client.messages.create(
+      {
+        model,
+        max_tokens: opts?.maxTokens ?? 8192,
+        messages: toAnthropicMessages(messages),
+        ...(system ? { system } : {}),
+        ...(anthropicTools && anthropicTools.length ? { tools: anthropicTools } : {}),
+        stream: true,
+      },
+      // V7 决策 C3：abort 透传——TaskStop 中断 in-flight 请求（SDK 抛 AbortError → 上层 isAbortError）
+      opts?.signal ? { signal: opts.signal } : undefined,
+    );
 
     // 跨事件聚合 tool_use 的 input（partial_json 增量到达）
     const toolBuffers = new Map<number, { id: string; name: string; json: string }>();
