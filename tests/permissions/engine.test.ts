@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -198,6 +198,24 @@ describe("pathInCwd（决策 B 白名单）", () => {
     trySymlinkDir(outside, path.join(dir, "out"));
     expect(pathInCwd(path.join(dir, "out", "x"), dir)).toBe(false);
   });
+
+  it.skipIf(!canSymlink())(
+    "cwd 已物理化（realpath 形态），p 经符号链接别名 → 仍判 cwd 内（V6-3 macOS /var→/private/var）",
+    () => {
+      // macOS 上子进程 process.cwd() 是物理形态（/private/var/...），入参 file_path 是逻辑形态
+      // （/var/folders/...）。用「real = 真实目录、alias = 指向 real 的符号链接」复现：cwd 传 real 的
+      // realpath 形态，p 走 alias 别名 → 修复前 pathInCwd false（resolved 别名形态匹配不上物理 cwd），
+      // 修复后 true（两侧 realpath 归一）。
+      const real = tempDir();
+      const alias = path.join(path.dirname(real), `run-agent-alias-${path.basename(real)}`);
+      trySymlinkDir(real, alias);
+      try {
+        expect(pathInCwd(path.join(alias, "a.txt"), realpathSync(real))).toBe(true);
+      } finally {
+        rmSync(alias, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("hasPermissionsToUseTool 决策矩阵", () => {

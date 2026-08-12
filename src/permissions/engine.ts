@@ -163,20 +163,20 @@ export function hasSuspiciousPathPattern(p: string): boolean {
 }
 
 /**
- * 路径是否在 cwd 内（决策 B 白名单，realpath 双形态 + 对称 resolve）。
- * 两个形态(expand+resolve 后 / realpath 后)都必须落在 cwd 的某个形态内，才判为 cwd 内；
- * 任一形态越界 → 视为 cwd 外。防 symlink 换名逃逸（foo → .run-agent/x、foo → /etc/passwd），
- * 并兼容 macOS /var→/private/var 之类的系统 symlink（两侧都 resolve 后比较）。
+ * 路径是否在 cwd 内（决策 B 白名单）。安全边界看物理位置：real(p) 落在 real(cwd) 内才算 cwd 内。
+ *   - 换名逃逸（foo → /etc/passwd）：real(p) 越出 real(cwd) → false，与旧「双形态都必须在内」
+ *     对逃逸的拦截一致（escape 的另一方向——逃进 .git/.run-agent——由 hasDeniedDirSegment 对双形态
+ *     `forms.some` 各自兜底；memory 豁免由 `forms.every` 守住，都不依赖本函数）。
+ *   - macOS /var→/private/var 系统 symlink：POSIX getcwd() 在 chdir 进符号链接后返回物理路径
+ *     （子进程 process.cwd() = /private/var/...），而入参可能是逻辑形态（/var/folders/...）。
+ *     旧实现要求 p 的 resolved 形态也匹配 cwd 形态 → 别名形态匹配不上「已物理化」的 cwd → 误判
+ *     cwd 外 → ask → headless 降级 deny（V6-3，macOS CI 全挂）。realpath 后两侧归一 → 修复。
  */
 export function pathInCwd(p: string, cwd: string): boolean {
-  const cwdForms = pathForms(cwd);
-  for (const form of pathForms(p)) {
-    const inside = cwdForms.some(
-      (cf) => form === cf || form.startsWith(cf.endsWith(path.sep) ? cf : cf + path.sep),
-    );
-    if (!inside) return false;
-  }
-  return true;
+  const cwdReal = pathForms(cwd)[1];
+  const sep = cwdReal.endsWith(path.sep) ? cwdReal : cwdReal + path.sep;
+  const pReal = pathForms(p)[1];
+  return pReal === cwdReal || pReal.startsWith(sep);
 }
 
 /** 极简 glob → 正则：支持 * / ** / ?，匹配时把反斜杠归一为斜杠。 */
