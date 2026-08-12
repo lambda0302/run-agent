@@ -12,6 +12,7 @@
 **前置核验(V0–V6 实施状态,2026-08-12)**:
 
 - **V7 0.7.0 已发布**:npm latest = 0.7.0;commit `d28b254`(V7 主体)+ tag `v0.7.0`;CI 3 OS × Node 20/22/24 全绿。多 Agent 编排落地——`agent` 工具 + 协调者三件套(send_message/task_stop)+ `--coordinator` + 自定义 agent 类型(frontmatter)。文档 `docs/agents.md`;Bug 记录无(V7-0.x 未发现,如有归入 `docs/Bug_V7.md`)。
+- **V7 0.7.1 已发布**:npm latest = 0.7.1;tag `v0.7.1`;CI 3 OS × Node 20/22/24 全绿(455 用例)。verification 验证子 agent(决策 D:证据式 VERDICT 契约 + 专门权限策略)+ 后台记忆提取双轨(决策 E:游标增量 + 互斥 + 失败静默)。文档 `docs/memory.md` 补双轨;测试 48 文件 / 455 用例全绿。
 - **V6(0.6.0)已发布**:npm latest = 0.6.0;commit `19d0195`(V6 主体)+ `59dd636`(V6-3 macOS pathInCwd 修复);tag `v0.6.0`;CI 3 OS × Node 20/22/24 9 job 全绿。Bug 记录 `docs/Bug_V6.md`(3 条)。
 - **V6 DoD 仅剩「真实模型手动验证(需 key)」**:hooks 触发 / skill 激活 / headless 全链路——不是代码缺口,同 V4/V5 列为每个版本验收尾项。
 - **0.4.1 `explore` 子 agent 是 V7 的种子**:已实现「嵌套 runQuery + 只读工具集 + 权限继承 + 上下文独立 + thoroughness」,注释明确「**后台运行与模型选择留到 V7(泛化为 Agent 工具)**」;`docs/Plan_V6.md` §5 交接段同义标注。V7 把它泛化成 `agent` 工具 + 类型注册表。
@@ -421,10 +422,10 @@ schema = z.object({
 - [x] `TaskStop`:abort 传播、AbortError 不重试直接上抛、stopped 保留部分结果、幂等(team registry + v7 单测)
 - [x] `/tasks` 命令列出后台任务状态(`src/cli/repl.ts` 装配核验 + `BackgroundTaskManager.list` 单测)
 - [x] 0.7.0 发布:docs/agents.md / CHANGELOG / 版本 / CI 3 OS × Node 20/22/24 / tag / npm pack / publish / npm view(发布)
-- [ ] verification 子 agent:工具集无写工具;safe bash allow、项目写 deny、/tmp 放行、危险命令 deny;策略 + 反合理化 + 探针进 system(单测)
-- [ ] verification 输出契约:每条 check 有 `Command run:`;缺证据的 PASS 被拒;`VERDICT: PASS/FAIL/PARTIAL` 字面量解析(单测)
-- [ ] 后台记忆提取:触发条件(Trust + 非 bare + 完整轮);游标增量;增量太少跳过;hasMemoryWritesSince 互斥;remember 写成功;失败不推进游标不抛;maxIterations 5(单测)
-- [ ] 0.7.1 发布:docs/memory.md 双轨 / CHANGELOG / 版本 / CI / tag / npm pack / publish / npm view(发布)
+- [x] verification 子 agent:工具集无写工具;safe bash allow、项目写 deny、/tmp 放行、危险命令 deny;策略 + 反合理化 + 探针进 system(单测 `tests/services/agents/builtin/verification.test.ts`)
+- [x] verification 输出契约:每条 check 有 `Command run:`;缺证据的 PASS 被拒;`VERDICT: PASS/FAIL/PARTIAL` 字面量解析(单测同上)
+- [x] 后台记忆提取:触发条件(Trust + 非 bare + 完整轮);游标增量;增量太少跳过;hasMemoryWritesSince 互斥;remember 写成功;失败不推进游标不抛;maxIterations 5(单测 `tests/services/extract/extract.test.ts`)
+- [x] 0.7.1 发布:docs/memory.md 双轨 / CHANGELOG / 版本 / tag / CI / npm pack / publish / npm view(发布)
 - [ ] **真实模型手动验证(需 key)**:跨模块任务由 2 个 specialist 分工且汇总正确;协调者 SendMessage 补充需求后子 agent 按新指令续跑、TaskStop 能止损;非平凡改动后 verification 出具带证据的 VERDICT;跑两轮对话后 `.run-agent/memory/` 出现后台提取的记忆(低成本模型下)
 
 ## §4 风险与注意

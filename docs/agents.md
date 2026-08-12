@@ -12,7 +12,7 @@ V7 引入子 agent 编排：主 agent 用 **`agent` 工具**把任务委派给 s
 | ----------------- | --------------------------------------------------------------------------------- |
 | `general-purpose` | 通用 worker：继承父级全部工具（**不含** `agent`/`send_message`/`task_stop`，防递归失控） |
 | `explore`         | 只读探索：仅 `repo_map`/`glob`/`grep`/`read_file`，`maxIterations=8`（0.4.1 迁移）     |
-| `verification`    | （0.7.1）证据式自验证子 agent                                                       |
+| `verification`    | （0.7.1）证据式验证专家：只读 + `run_bash`（safe 自动放行 / 项目写 deny / `/tmp` 放行），出具带命令证据的 `VERDICT: PASS|FAIL|PARTIAL`，`maxIterations=12` |
 
 **三件套只装配主 agent**：`agent`/`send_message`/`task_stop` 三个协调原语不会出现在子 agent 的
 工具池里——worker 无协调权，模型无法无限递归派发子 agent（`CORE_TEAM_TOOLS`）。
@@ -39,6 +39,8 @@ system: 你是 QA 审查员。         # system 片段（可选，与 body 一�
 - **tools 显式声明** → 子查询只用声明的工具；**缺省** → 父级全部工具（不含三件套）。
 - **同名去重**：内置 > 用户级 > 项目级；非法 frontmatter 记入启动告警（跳过不阻断）。
 - **model 优先级**：`agent` 调用参数 > 类型 frontmatter > 继承父级。
+
+> `extractMemories` 是**系统内部类型**（0.7.1 后台记忆提取用，见 [docs/memory.md](memory.md)），不进主 agent 可 spawn 的清单——它由 REPL 轮末引擎直接以 `runAgent` 驱动，不入后台任务汇总。
 
 ## `agent` 工具
 

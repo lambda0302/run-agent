@@ -1,6 +1,6 @@
 {
   "name": "@liyiyong/run-agent",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "A transparent, multi-provider coding agent for your terminal.",
   "type": "module",
   "license": "MIT",

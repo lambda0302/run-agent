@@ -40,6 +40,28 @@ npm test 是唯一测试入口;改完 src/ 后先 build 再 vitest run 验证。
 - 双门控:权限引擎(默认模式下 ask,可被用户规则 deny)+ **Trust**(未信任项目拒绝写项目记忆)。
 - 写目标由工具内部计算(cwd 由 CLI 装配注入),不接受入参路径 → 模型无法任意写文件。
 
+## 双轨:每轮结束后台提取(0.7.1,V7 决策 E)
+
+真实会话暴露单轨(只靠主 agent 主动 `remember`)对快模型触发不可靠。0.7.1 起记忆写入走**双轨**:
+
+1. **主 agent 主动写**(0.4.0,`remember` 工具);
+2. **后台提取兜底**(0.7.1):每轮 query loop 结束,提取子 agent 分析**本轮增量消息**,把稳定的跨会话结论用 `remember` 落库。
+
+**触发条件**:仅交互 REPL(Trust 且非 `--bare`);headless 不触发(CI 每次跑成本不可接受)。`RUN_AGENT_DISABLE_MEMORY_EXTRACT=1` 可整体关闭。
+
+**机制**(`src/services/extract/`):
+
+- **游标增量**:只分析上次成功提取之后新增的消息;新增 < 4 条直接跳过(成本守卫,不推进游标,累积到下次);
+- **互斥**:增量里出现主 agent 的 `remember` 调用 → 跳过并推进游标(主/后台每轮互斥,防重复写);
+- **成功才推进游标**,失败静默不推进(下次重试);
+- fire-and-forget:`void trigger(...)`,不 await、不阻断下一轮 prompt。
+
+提取子 agent(`extractMemories` 内置类型,不进主 agent 可 spawn 清单):
+
+- 工具集只读三件套 + `remember`;权限 `ask→deny`,唯一例外 `remember→allow`(仅 Trust,后台无交互);
+- `maxIterations: 5` 硬顶;注入增量消息(≤30 条 / 60KB)+ 现有记忆索引,先读索引防重复;
+- **成本**:每 user turn 至多一次额外 LLM 调用(游标增量 + 互斥 + 增量太少跳过大幅降低实际触发);prompt 量级 2-5k token,非全量历史。
+
 ## 读取:索引常驻 + 按需读全文
 
 1. system 稳定段注入 `## MEMORY.md` 索引块(仅 Trust 会话,`--bare` 禁用);模型启动即见索引。

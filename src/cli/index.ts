@@ -33,6 +33,7 @@ import { HookManager } from "../services/hooks/manager.js";
 import { loadSkills } from "../services/skills/loader.js";
 import { SkillRegistry } from "../services/skills/skill_tool.js";
 import { loadCommands, CommandRegistry } from "../services/commands/loader.js";
+import { ExtractMemoriesEngine } from "../services/extract/extract.js";
 import { RunAgentError } from "../utils/errors.js";
 import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
@@ -407,6 +408,29 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     parentTools: () => poolRef(),
   });
 
+  // ── V7 决策 E：后台记忆提取引擎（双轨之二）——仅 Trust 且非 bare 装配；触发点只在 REPL，
+  // headless one-shot 天然不触发（CI 每次跑成本不可接受）。RUN_AGENT_DISABLE_MEMORY_EXTRACT 可关。────
+  let extractMemories: ExtractMemoriesEngine | undefined;
+  if (isTrusted && !opts.bare) {
+    extractMemories = new ExtractMemoriesEngine({
+      cwd,
+      isTrusted,
+      bare: Boolean(opts.bare),
+      client,
+      // 父级池懒取：触发在轮末，届时 agentTools() 已刷新 poolRef（含 MCP 已连接工具 + remember）
+      parentTools: () => poolRef(),
+      ...(contextWindow ? { contextWindow } : {}),
+      resultsDir: path.dirname(sessionFile),
+      makeModelClient: (m) =>
+        createClient(cfg.provider, {
+          ...(apiKey ? { apiKey } : {}),
+          model: m,
+          ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
+        }),
+      disabled: Boolean(process.env.RUN_AGENT_DISABLE_MEMORY_EXTRACT),
+    });
+  }
+
   // 静态工具一次装配（含 mcp_connect + agent 委派原语）；MCP 已连接工具每轮动态追加（函数池，决策 B3）
   const baseTools = buildTools({
     cwd,
@@ -456,6 +480,8 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ...(commands ? { commands } : {}),
     // V7 决策 A6：后台任务注册表（/tasks 查看）——交互 REPL 才装配；headless one-shot 无任务列表
     ...(backgroundTasks ? { backgroundTasks } : {}),
+    // V7 决策 E：后台记忆提取引擎（仅 Trust 且非 bare 装配）；REPL 轮末 fire-and-forget 触发
+    ...(extractMemories ? { extractMemories } : {}),
     // V7 决策 A4：权限桥——REPL/one-shot 构造完 checkPermission 后写入，agent 工具子查询读取
     permissionBridge,
     // 决策 8：超大工具结果落盘到 session 同目录（r0.txt/r1.txt…），消息里只留指针

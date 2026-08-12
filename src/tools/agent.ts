@@ -79,12 +79,15 @@ export function makeAgentTool(opts: AgentToolOptions): Tool {
       }
       // 子 system = 类型 base system + 主 system 快照（一次性组装,A5）
       const subSystem = [def.system, opts.system].filter((s) => s && s.length > 0).join("\n\n");
+      // V7 决策 D3：类型级专门权限策略优先（verification 的 safe bash allow / 项目写 deny），
+      // 否则继承父级 checkPermission（engine 硬底线 / 用户规则在子查询同样生效）
+      const cp = def.checkPermission ?? opts.checkPermission;
       const shared = {
         client,
         tools: def.resolveTools(opts.parentTools),
         ...(subSystem ? { system: subSystem } : {}),
         ...(opts.contextWindow !== undefined ? { contextWindow: opts.contextWindow } : {}),
-        ...(opts.checkPermission !== undefined ? { checkPermission: opts.checkPermission } : {}),
+        ...(cp !== undefined ? { checkPermission: cp } : {}),
         ...(def.maxIterations !== undefined ? { maxIterations: def.maxIterations } : {}),
         ...(opts.resultsDir !== undefined ? { resultsDir: opts.resultsDir } : {}),
       };

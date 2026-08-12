@@ -3,11 +3,17 @@
  * 内置三型（general-purpose / explore / verification[M5]）硬编码；M3 的 loader
  * 会把用户自定义 frontmatter 类型 merge 进来（内置优先，同名自定义被忽略）。
  */
+import type { PermissionCheckResult } from "../../core/execute.js";
 import type { Tool } from "../../tools.js";
 import { globTool } from "../../tools/glob.js";
 import { grepTool } from "../../tools/grep.js";
 import { readTool } from "../../tools/read.js";
 import { repoMapTool } from "../../tools/repo_map.js";
+import {
+  VERIFICATION_SYSTEM,
+  VERIFICATION_TOOL_NAMES,
+  makeVerificationCheckPermission,
+} from "./builtin/verification.js";
 
 export interface AgentTypeDef {
   name: string;
@@ -19,6 +25,9 @@ export interface AgentTypeDef {
   maxIterations?: number;
   /** 类型级 model 覆盖（优先级：调用参数 > 类型 frontmatter > 继承父级）。 */
   model?: string;
+  /** V7 决策 D3：类型级专门权限策略（如 verification 的 safe bash allow / 项目写 deny）。
+   *  定义时替换父级继承的 checkPermission；缺省继承父级。 */
+  checkPermission?: (tool: Tool, input: unknown) => Promise<PermissionCheckResult>;
 }
 
 /** 协调者三件套：只装配主 agent；子 agent 内置类型默认不含（worker 无协调权，防递归失控）。 */
@@ -43,7 +52,17 @@ export function builtinAgentTypes(): AgentTypeDef[] {
         "目标是回答调用方的探索问题，返回结论与关键位置。",
       maxIterations: 8,
     },
-    // verification 在 M5（0.7.1）注册
+    {
+      // V7 决策 D（0.7.1）：对抗性验证专家——证据式 VERDICT 契约，工具集无写工具 + 专门权限策略
+      name: "verification",
+      description:
+        "证据式验证专家：跑构建/测试/检查出具带命令证据的 VERDICT: PASS/FAIL/PARTIAL。" +
+        "非平凡改动（3+ 文件/后端/API/基础设施）完成前必须 spawn。",
+      resolveTools: (parent) => parent().filter((t) => VERIFICATION_TOOL_NAMES.has(t.name)),
+      system: VERIFICATION_SYSTEM,
+      maxIterations: 12,
+      checkPermission: makeVerificationCheckPermission(),
+    },
   ];
 }
 

@@ -7,6 +7,7 @@ import { runQuery } from "../core/query.js";
 import type { RunQueryResult } from "../core/query.js";
 import type { PermissionBridge } from "../core/run_agent.js";
 import type { BackgroundTaskManager } from "../services/agents/team/registry.js";
+import type { ExtractMemoriesEngine } from "../services/extract/extract.js";
 import {
   hasPermissionsToUseTool,
   inputPath,
@@ -66,6 +67,8 @@ export interface AgentOptions {
   backgroundTasks?: BackgroundTaskManager;
   /** V7 决策 A4：权限桥——本文件构造完 checkPermission 后写入，agent 工具的子查询读取。 */
   permissionBridge?: PermissionBridge;
+  /** V7 决策 E：后台记忆提取引擎（仅 Trust 且非 bare 装配）；每完整 query loop 结束 fire-and-forget 触发。 */
+  extractMemories?: ExtractMemoriesEngine;
 }
 
 const DIM = "\x1b[90m";
@@ -381,6 +384,8 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
       for (const m of result.added) {
         await appendMessage(opts.sessionFile, m);
       }
+      // V7 决策 E：后台记忆提取（fire-and-forget，不 await、不阻断下一轮；游标增量 + 互斥 + 失败静默）
+      if (opts.extractMemories) void opts.extractMemories.trigger(result.messages);
       // 清晰的任务完成分隔线：明确一轮已结束，避免“任务完成后输入 y 被当成新 prompt 又跑一遍”
       out.write(
         `${GREEN}${DIVIDER}${RESET}\n${GREEN}✔ 任务完成${RESET}${DIM} — 可继续输入下一条 prompt（/exit 退出）${RESET}\n${GREEN}${DIVIDER}${RESET}\n`,

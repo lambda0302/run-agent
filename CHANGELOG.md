@@ -2,6 +2,13 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.7.1] - 2026-08-12
+
+### Added
+
+- **verification 子 agent**（V7 决策 D）：对抗性验证专家——非平凡改动（3+ 文件 / 后端 / API / 基础设施）完成前委派它跑构建 / 测试 / 检查，出具带命令证据的 `VERDICT: PASS|FAIL|PARTIAL`。工具集**强制只读**（repo_map/glob/grep/read_file/verify/run_bash，无 write/edit）；专门权限策略：safe bash 自动放行（构建测试 lint 不弹窗）、risky/dangerous 命令 deny、项目内写重定向 deny、`/tmp` 临时脚本放行；`maxIterations: 12` 硬顶。证据契约：每条 check 必须含 `Command run:` + 实际输出；解析器校验「PASS 但无命令证据」判拒（主 agent 据此重新委派）。`agent` 工具 `agentType: "verification"` 调用。
+- **后台记忆提取双轨**（V7 决策 E）：交互 REPL 每轮 query loop 结束后台提取子 agent（`extractMemories` 内置类型，独立执行路径、不入后台任务汇总），分析**本轮增量消息**把稳定的跨会话结论用 `remember` 落库——弥补主 agent 主动写对快模型触发不可靠。游标增量（只分析新增，<4 条跳过）、主/后台互斥（增量含 `remember` 则跳过并推进游标）、成功才推进游标、失败静默重试；fire-and-forget 不阻断下一轮。仅 Trust 且非 `--bare` 触发；headless 不触发；`RUN_AGENT_DISABLE_MEMORY_EXTRACT=1` 关闭。详见 [docs/memory.md](docs/memory.md)。
+
 ## [0.7.0] - 2026-08-12
 
 ### Added

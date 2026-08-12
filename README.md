@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.7.0**（多 Agent 编排：agent 委派 + 协调者三件套 + 自定义 agent 类型）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.7.1**（多 Agent 编排 + verification 验证子 agent + 后台记忆提取双轨）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.7.0
+run-agent --version    # 应输出 0.7.1
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
@@ -331,11 +331,13 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **自定义命令**（0.6.0）：`.md` 模板（`@file` 内联 + 参数追加，走 agent 循环）或 `.py/.js/.ts` 脚本（解释器直跑，注入 `RUN_AGENT_CWD`/`RUN_AGENT_PROMPT`），REPL `/命令名` 触发；详见 [docs/commands.md](docs/commands.md)
 - **Headless**（0.6.0）：`--print <prompt>` 跑一次即退，`--json` 输出结构化结果（stdout 纯 JSON、人类日志去 stderr、工具轨迹含权限判定与截断、退出码 0/1），`--max-turns` 限轮数——可编程调用、对接 CI / 脚本；详见 [docs/usage.md](docs/usage.md#headlessprint--json)
 - **多 Agent 编排**（0.7.0）：`agent` 工具委派子任务（前台阻塞 / 后台并行 `run_in_background`），`send_message` 补充信息、`task_stop` 止损，`--coordinator` 协调者模式拆解→并行委派→汇总核对；自定义 agent 类型（`.run-agent/agents/` frontmatter）；子 agent 权限严格继承、后台永不弹窗；详见 [docs/agents.md](docs/agents.md)
+- **verification 验证子 agent**（0.7.1）：对抗性验证专家——非平凡改动完成后委派它跑构建/测试/检查，出具带命令证据的 `VERDICT: PASS|FAIL|PARTIAL`（强制只读 + safe bash 自动放行 / 项目写 deny 的专门权限）；详见 [docs/agents.md](docs/agents.md)
+- **后台记忆提取双轨**（0.7.1）：交互 REPL 每轮结束后台提取子 agent 分析增量消息、自动沉淀跨会话记忆（游标增量 + 主/后台互斥 + 失败静默；仅 Trust 且非 `--bare`；`RUN_AGENT_DISABLE_MEMORY_EXTRACT` 可关）；详见 [docs/memory.md](docs/memory.md)
 - **多提供商**：一套抽象对接 Anthropic / OpenAI / OpenAI 兼容 / Ollama
 - **透明**：REPL 里实时看到模型文本增量与每次工具调用及结果
 - **会话持久化**：JSONL 追加、`--resume` 原样回放（支持压缩边界续接）
 
-V7 暂不包含（路线图 V7+）：verification 子 agent（0.7.1）、后台记忆提取双轨（0.7.1）、TUI、session 切换。
+V7 已交付 0.7.1；路线图 V7+ 待做：TUI、session 切换。
 
 ## 安全模型
 
