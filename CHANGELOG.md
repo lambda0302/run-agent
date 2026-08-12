@@ -2,6 +2,51 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.6.0] - 2026-08-12
+
+### Added
+
+- **Hooks**（V6 决策 A）：五类事件自动化——`PreToolUse`（工具执行前，engine 判定后，可返回
+  `permissionDecision` 覆盖判定，**engine deny 硬底线不可被 hook 放行**）/ `PostToolUse`
+  （工具执行后，成功失败都触发，tool_result 截断 2k 传入）/ `SessionStart` / `SessionEnd` /
+  `Stop`（每轮结束，stdout 注入**下一轮** system，限 2KB）。每条 hook 支持 `command`（shell 跑，
+  输入走 stdin）或 `http`（POST JSON，可带 headers），默认 30s 超时、失败/超时绝不阻断主流程。
+  配置 `settings.json`：用户级 `~/.config/run-agent/settings.json`（始终）+ 项目级
+  `.run-agent/settings.json`（仅 Trust，hook 会执行任意命令，防提示注入），同事件用户级在前、
+  项目级在后合并。REPL 与 headless 都生效。详见 [docs/hooks.md](docs/hooks.md)。
+- **Skills**（V6 决策 B）：预写专业工作流。`.run-agent/skills/<name>/SKILL.md`（Trust）或
+  `~/.config/run-agent/skills/`，frontmatter `name`/`description`/`allowed-tools` + body；
+  装配 **`SkillTool`**（第 13 个内置工具，**归内置只读**——default/headless 免确认）——按 name
+  加载、body 全文回填 tool_result，激活后本 turn 工具 = `allowed-tools ∩ 池`（内置只读始终保留，
+  支持 `mcp__*` 通配），无限制则原样。**body 惰性加载（渐进式披露）**：registry 只持
+  「名 + 描述 + 文件路径」，启动不读 body；`SkillTool` 调用 / `/技能名` 时 `readSkillBody` 从
+  磁盘现读——内存不膨胀，改 SKILL.md 无需重启即热更新；system 只注入「名 + 描述」清单
+  （body 不塞 token，对齐 Claude Code）。REPL `/skills` 列清单、`/<技能名>` 手动触发；同名去重
+  用户级优先。详见 [docs/skills.md](docs/skills.md)。
+- **自定义命令**（V6 决策 C）：两种形态——`prompt`（`.md` 模板，`@file` 内联 + 参数行尾追加，
+  展开后走 agent 循环）与 `local`（`.py`/`.js`/`.ts` 脚本，解释器直跑、参数走 argv、注入
+  `RUN_AGENT_CWD`/`RUN_AGENT_PROMPT`，stdout 展示不回喂模型，120s 超时 + 30k 截断复用 run_bash）。
+  路径 `.run-agent/commands/`（Trust）+ `~/.config/run-agent/commands/`；REPL `/commands` 列清单、
+  `/<命令名>` 执行；local-jsx 形态明确推 V8。详见 [docs/commands.md](docs/commands.md)。
+- **Headless**（V6 决策 D）：`--print <prompt>` 跑一次即退（与位置参数互斥），`--json` 输出
+  结构化结果到 stdout（人类日志去 stderr，stdout 纯 JSON），`--max-turns <n>` 限 ReAct 轮数。
+  JSON 契约：`version/provider/model/session/reply/messages/turns/tools[]/errors`——`tools[]` 每项
+  含 `name/input/result/permission`，result 记录时截断 2000 字符（`TOOL_TRACE_RESULT_LIMIT`）；
+  `model` 报告实际生效值（未显式指定 → 适配器默认，openai-compatible 即 gpt-4o-mini）；
+  退出码 0 成功 / 1 出错；无 key / flag 冲突 → stderr 报错 + 退出码 1。headless 下 hooks 同样触发。
+  详见 [docs/usage.md](docs/usage.md#headlessprint--json)。
+- **openai-compatible 默认模型对齐**：`resolveModelName` 对 `openai-compatible` 未显式指定时
+  返回 gpt-4o-mini（与适配器内部默认一致），headless JSON 报告与实跑一致。
+
+### Fixed
+
+- **headless 工具轨迹为空**（V6-1）：`toolCalls.push(...attemptCalls)` 从 getResults 之前移到
+  **之后**——`onToolTrace` 在工具 settle 时才触发，先合并会漏掉仍在执行中的轨迹。详见
+  [docs/Bug_V6.md](docs/Bug_V6.md)。
+- **Windows headless 收尾崩溃**（V6-2）：`process.exit()` 在 stdout 写回调里触发 libuv
+  `UV_HANDLE_CLOSING` 断言（0xC0000409）。改 `closeAll()` 回收 MCP 子进程句柄 +
+  `process.exitCode` 自然退出（确定性 0/1）。详见 [docs/Bug_V6.md](docs/Bug_V6.md)。
+
 ## [0.5.1] - 2026-08-12
 
 ### Fixed

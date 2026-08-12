@@ -12,6 +12,8 @@ import { makeExploreTool } from "./tools/explore.js";
 import { repoMapTool } from "./tools/repo_map.js";
 import { verifyTool } from "./tools/verify.js";
 import type { PlanTools } from "./tools/plan_mode.js";
+import { makeSkillTool } from "./services/skills/skill_tool.js";
+import type { SkillRegistry } from "./services/skills/skill_tool.js";
 
 /** 一次工具调用的返回：result 会回填进对话；artifacts 是落盘副产物路径（如被截断的完整输出）。 */
 export interface ToolCallResult {
@@ -133,6 +135,8 @@ export interface BuildToolsOptions {
   planMode?: PlanTools;
   /** V5 决策 B3：mcp_connect 工具（makeMcpConnectTool 的结果）。配置了 MCP server 才装配。 */
   mcpConnect?: Tool;
+  /** V6 决策 B2：技能注册表。有技能时装配 SkillTool。 */
+  skills?: SkillRegistry;
 }
 
 /** 运行时装配完整工具集：静态工具 + remember/explore 工厂实例 + plan 导航工具（注入运行时依赖）。 */
@@ -155,6 +159,10 @@ export function buildTools(opts: BuildToolsOptions): Tool[] {
   // V5 决策 B3：mcp_connect 追加在最后（MCP server 配置存在才装配）
   if (opts.mcpConnect) {
     tools.push(opts.mcpConnect);
+  }
+  // V6 决策 B2：有技能时装配 SkillTool（模型运行时加载技能）
+  if (opts.skills && opts.skills.all.length > 0) {
+    tools.push(makeSkillTool(opts.skills));
   }
   return tools;
 }

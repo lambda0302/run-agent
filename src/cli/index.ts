@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pkg from "../../package.json" with { type: "json" };
 import { loadConfig, resolveApiKey, resolveContextWindow } from "../config/index.js";
+import type { RunAgentConfig } from "../config/index.js";
 import { buildSystemPrompt } from "../core/context.js";
 import type { SystemContext } from "../core/context.js";
+import type { RunQueryResult } from "../core/query.js";
 import { loadDotEnv } from "../config/load.js";
 import { askTrustProject } from "../permissions/prompt.js";
 import {
@@ -16,7 +18,7 @@ import {
 } from "../permissions/store.js";
 import { hasPermissionsToUseTool, isBuiltinReadOnlyTool } from "../permissions/engine.js";
 import type { Decision, PermissionContext, PermissionMode } from "../permissions/types.js";
-import { createClient } from "../providers/index.js";
+import { createClient, resolveModelName } from "../providers/index.js";
 import type { LLMMessage, ProviderName } from "../providers/types.js";
 import { listMemories, pruneMemories, removeMemory, topicFilePath } from "../core/memory.js";
 import { buildTools } from "../tools.js";
@@ -26,9 +28,15 @@ import type { PlanTools } from "../tools/plan_mode.js";
 import { loadMcpConfig } from "../services/mcp/config.js";
 import { makeMcpConnectTool } from "../services/mcp/mcp_connect.js";
 import { McpManager } from "../services/mcp/manager.js";
+import { isHooksConfigEmpty, loadHooksConfig } from "../services/hooks/config.js";
+import { HookManager } from "../services/hooks/manager.js";
+import { loadSkills } from "../services/skills/loader.js";
+import { SkillRegistry } from "../services/skills/skill_tool.js";
+import { loadCommands, CommandRegistry } from "../services/commands/loader.js";
 import { RunAgentError } from "../utils/errors.js";
 import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
+import type { AgentOptions } from "./repl.js";
 
 const program = new Command();
 
@@ -58,6 +66,12 @@ program
   .option("-t, --trust", "trust the current project directory (skips the Trust prompt)")
   .option("--bare", "disable CLAUDE.md memory and dynamic context injection")
   .option("--context-window <n>", "context window size in tokens (defaults per provider)")
+  .option(
+    "--print <prompt>",
+    "headless: run this prompt once and exit (mutually exclusive with positional prompt)",
+  )
+  .option("--json", "output structured JSON to stdout (with --print); human logs go to stderr")
+  .option("--max-turns <n>", "ReAct loop iteration cap for headless runs (default 25)")
   .action(async (prompt: string | undefined, opts: Record<string, unknown>) => {
     try {
       await main(prompt, opts);
@@ -154,6 +168,9 @@ interface CliOpts {
   trust?: boolean;
   bare?: boolean;
   contextWindow?: number;
+  print?: string;
+  json?: boolean;
+  maxTurns?: string;
 }
 
 /** 解析权限模式：--mode > RUN_AGENT_MODE > config > default。
@@ -167,6 +184,10 @@ function resolveMode(opts: CliOpts, configMode: string | undefined): PermissionM
 }
 
 async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
+  // V6 决策 D1：--print 与位置参数互斥
+  if (opts.print && prompt) {
+    throw new RunAgentError("--print <prompt> 与位置参数 prompt 互斥，请二选一");
+  }
   loadDotEnv(); // 项目根 .env（已存在的环境变量优先，不覆盖）
   const cfg = loadConfig({
     ...(opts.provider ? { provider: opts.provider as ProviderName } : {}),
@@ -243,6 +264,27 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     });
   }
 
+  // ── V6 决策 B：技能注册表（用户级 + 项目级 Trust；有技能才创建，零配置零开销）────
+  let skillRegistry: SkillRegistry | undefined;
+  {
+    const { skills, skipped } = loadSkills(cwd, isTrusted);
+    if (skills.length > 0) {
+      skillRegistry = new SkillRegistry(skills);
+      for (const s of skipped) {
+        process.stderr.write(`⚠ 技能 ${s} 解析失败/超限，已跳过\n`);
+      }
+    }
+  }
+
+  // ── V6 决策 C：自定义命令注册表（用户级 + 项目级 Trust；有命令才创建）────
+  let commands: CommandRegistry | undefined;
+  {
+    const loaded = loadCommands(cwd, isTrusted);
+    if (loaded.commands.length > 0) {
+      commands = new CommandRegistry(loaded.commands);
+    }
+  }
+
   // ── V3 上下文：system 组装所需 + 生效的上下文窗口 ────────────────
   const systemCtx: SystemContext = {
     cwd,
@@ -256,6 +298,9 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
             .map((n) => `${n}(${mcpConfig.servers[n]!.type})`)
             .join(", "),
         }
+      : {}),
+    ...(skillRegistry && skillRegistry.all.length > 0
+      ? { skills: skillRegistry.all.map((s) => `- ${s.name}: ${s.description}`).join("\n") }
       : {}),
   };
   const contextWindow = resolveContextWindow(cfg);
@@ -290,6 +335,13 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     process.stderr.write(`✓ 会话 ${sessionFile}\n`);
   }
 
+  // ── V6 决策 A3：HookManager（配置了 hooks 才创建，零配置零开销）────
+  const hooksConfig = loadHooksConfig(cwd, isTrusted);
+  let hookManager: HookManager | undefined;
+  if (!isHooksConfigEmpty(hooksConfig)) {
+    hookManager = new HookManager(hooksConfig, { cwd, sessionFile });
+  }
+
   // V5 决策 B4：只读判定闭包 = 内置只读 ∪ explore ∪ MCP readOnlyHint（权限管线并入）
   const readOnlyNames = (name: string): boolean =>
     isBuiltinReadOnlyTool(name) || name === "explore" || (mcpManager?.isReadOnly(name) ?? false);
@@ -304,8 +356,20 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     checkPermission: exploreCheckPermission,
     ...(planCtrl ? { planMode: planCtrl } : {}),
     ...(mcpManager ? { mcpConnect: makeMcpConnectTool(mcpManager) } : {}),
+    ...(skillRegistry ? { skills: skillRegistry } : {}),
   });
-  const agentTools = (): Tool[] => [...baseTools, ...(mcpManager?.getConnectedTools() ?? [])];
+  // V6 决策 B2：活跃技能 allowed-tools 过滤（本 turn 剩余工具 = allowed-tools ∩ 池 ∪ 内置只读）
+  const agentTools = (): Tool[] => {
+    const pool = [...baseTools, ...(mcpManager?.getConnectedTools() ?? [])];
+    return skillRegistry ? skillRegistry.filterToolsForActiveSkill(pool) : pool;
+  };
+
+  // V6 决策 D：--max-turns <n> → ReAct 循环轮数上限（解析失败警告并忽略）
+  let maxTurns = opts.maxTurns !== undefined ? Number(opts.maxTurns) : undefined;
+  if (maxTurns !== undefined && (!Number.isInteger(maxTurns) || maxTurns <= 0)) {
+    process.stderr.write(`⚠ --max-turns "${opts.maxTurns}" 非法，已忽略\n`);
+    maxTurns = undefined;
+  }
 
   const agentOpts = {
     client,
@@ -316,22 +380,76 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ctx,
     contextWindow,
     systemCtx,
+    ...(maxTurns !== undefined ? { maxIterations: maxTurns } : {}),
     ...(planCtrl ? { planMode: planCtrl } : {}),
     ...(mcpManager ? { mcpManager } : {}),
     ...(mcpManager ? { readOnlyNames } : {}),
+    ...(hookManager ? { hookManager } : {}),
+    ...(skillRegistry ? { skillRegistry } : {}),
+    ...(commands ? { commands } : {}),
     // 决策 8：超大工具结果落盘到 session 同目录（r0.txt/r1.txt…），消息里只留指针
     resultsDir: path.dirname(sessionFile),
   };
 
-  if (prompt) {
-    await runOneShot(agentOpts, prompt);
+  // V6 决策 D：--print / 位置参数 = one-shot（headless）；否则交互 REPL
+  const effectivePrompt = opts.print ?? prompt;
+  if (effectivePrompt) {
+    if (opts.json) {
+      await runHeadless(agentOpts, effectivePrompt, cfg, sessionFile);
+    } else {
+      await runOneShot(agentOpts, effectivePrompt);
+    }
   } else {
+    if (opts.json) {
+      throw new RunAgentError("--json 需要 --print <prompt> 或位置参数 prompt");
+    }
     if (!process.stdin.isTTY) {
       program.help();
       return;
     }
     await runRepl(agentOpts);
   }
+}
+
+/** V6 决策 D：headless + JSON 契约——stdout 只输出合法 JSON，人类可读日志去 stderr。
+ * 退出码：成功 0；捕获到错误 → errors 数组 + exit 1。 */
+async function runHeadless(
+  agentOpts: AgentOptions,
+  prompt: string,
+  cfg: RunAgentConfig,
+  sessionFile: string,
+): Promise<void> {
+  const errors: string[] = [];
+  let result: RunQueryResult | null = null;
+  // JSON 模式下流式文本也去 stderr，保证 stdout 只有 JSON
+  try {
+    result = await runOneShot({ ...agentOpts, out: process.stderr }, prompt);
+  } catch (e) {
+    errors.push(e instanceof Error ? e.message : String(e));
+  }
+  const payload = {
+    version: pkg.version,
+    provider: cfg.provider,
+    model: resolveModelName(cfg.provider, cfg.model),
+    session: path.basename(sessionFile),
+    reply: result?.reply ?? "",
+    messages: result?.messages.length ?? 0,
+    turns: result?.iterations ?? 0,
+    tools: (result?.toolCalls ?? []).map((t) => ({
+      name: t.name,
+      input: t.input,
+      result: t.result,
+      permission: t.permission,
+    })),
+    errors,
+  };
+  // 先回收 MCP 子进程（否则其 stdio 句柄卡住事件循环），再写 JSON 并设退出码。
+  // 不调用 process.exit()：Windows libuv 在句柄关闭中途强退会触发 UV_HANDLE_CLOSING 断言崩溃；
+  // 写完成回调里设 process.exitCode，随后事件循环自然退出（确定性退出码 0/1）。
+  await agentOpts.mcpManager?.closeAll();
+  process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`, () => {
+    process.exitCode = errors.length > 0 ? 1 : 0;
+  });
 }
 
 program.parse();

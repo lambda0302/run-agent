@@ -32,7 +32,12 @@ npm run smoke      # build + 冒烟（--version / --help）
 - provider 适配器测试（`tests/providers/`）：mock SDK，覆盖流式 + tool_use / function calling 互转，**不依赖真实 API key**。
 - `tests/config.test.ts`：配置优先级矩阵；`tests/core/query.test.ts`：mock LLM 驱动的 agent loop golden 场景。
 - `tests/tools/`：Edit / Glob / Grep / Bash / zod→JSONSchema 单测。
-- `tests/cli.test.ts`：对 `dist/cli.js` 的冒烟测试，验证可执行性、帮助信息与错误退出；**必须先生成 dist**（`npm test` 已内置 build）。
+- `tests/services/`：Hooks / Skills / 自定义命令（loader + manager + tool + exec）。
+- `tests/cli/`：对 `dist/cli.js` 的集成测试——`headless.test.ts`（`--print`+`--json` 契约，走
+  `tests/cli/mockLLM.ts` 本地 mock LLM server，hermetic、无真实网络/API key，打包产物必须先生成
+  dist）、`output-gate.test.ts`、`repl_skills.test.ts` / `repl_commands.test.ts` / `repl_mcp.test.ts`。
+- `tests/cli.test.ts`：CLI 冒烟测试（可执行性、帮助、错误退出）。
+- 涉及配置/会话路径的测试要沙箱子进程环境（`USERPROFILE`/`HOME` 指向临时目录），防读到真实配置。
 - 真实模型调用请在本地手动验证（需要 API key）：
 
 ```bash
@@ -41,6 +46,13 @@ node dist/cli.js "你好，请用一句话自我介绍"
 # 或进入 REPL
 node dist/cli.js
 ```
+
+## 二次开发（0.6.0）
+
+- **Hooks** 扩展点 `src/services/hooks/`：新事件类型、hook 输出回喂模型（当前仅 Stop 注入）。
+- **Skills** 扩展点 `src/services/skills/`：SkillTool 子 agent 化 → V7（当前主循环注入 + allowed-tools 过滤）。
+- **自定义命令** 扩展点 `src/services/commands/`：local-jsx 形态 → V8；local 输出自动回喂模型。
+- 新工具实现 `Tool` 接口（`src/tools.ts`）即可接入，写类工具显式 `isConcurrencySafe: false`。
 
 ## CI
 

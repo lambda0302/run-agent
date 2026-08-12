@@ -23,8 +23,10 @@ const DENY_DIR_SEGMENTS = new Set([".git", ".claude", ".run-agent"]);
  */
 const AGENT_DIR_BASH_RE = /(?<=^|[\s\\/'"`=(;|&])\.run-agent(?![\w-])/;
 
-/** 只读工具：default 模式下免确认。repo_map 为 0.4.1 只读定位工具。 */
-const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep", "repo_map"]);
+/** 只读工具：default 模式下免确认。repo_map 为 0.4.1 只读定位工具。
+ *  SkillTool 为 V6 技能加载（只回填 body 文本、无副作用）：必须归只读，
+ *  否则 headless/one-shot 在 default 模式返回 ask → 无弹窗直接 deny，技能全废。 */
+const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep", "repo_map", "SkillTool"]);
 
 /** 内置只读判定（V5 决策 B4）：hasPermissionsToUseTool 第 7 参 readOnlyNames 的缺省值。
  *  REPL 装配时并入 explore（只读探索子 agent）与 MCP 只读 hint 名，见 repl.ts。 */

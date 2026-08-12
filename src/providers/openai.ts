@@ -10,7 +10,7 @@ import type {
   ToolUseBlock,
 } from "./types.js";
 
-const DEFAULT_MODEL = "gpt-4o-mini";
+export const DEFAULT_MODEL = "gpt-4o-mini";
 
 type OpenAIChunk = {
   choices?: Array<{

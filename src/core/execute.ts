@@ -20,15 +20,42 @@ import type { Tool } from "../tools.js";
 
 export const MAX_CONCURRENCY = 10;
 
+/**
+ * 权限回调的返回：既可是裸 Decision（allow/deny），也可是「决策 + 拒绝原因」。
+ * V6 决策 A4：PreToolUse hook 拒绝时带上 reason，deny 回填优先用 hook reason
+ * （比 tool.denyMessage 更具体），再退回通用消息。
+ */
+export type PermissionCheckResult = Decision | { decision: Decision; reason?: string };
+
+export function decisionOf(r: PermissionCheckResult): Decision {
+  return typeof r === "string" ? r : r.decision;
+}
+
+export function denyReasonOf(r: PermissionCheckResult): string | undefined {
+  return typeof r === "object" ? r.reason : undefined;
+}
+
 export interface ExecuteOptions {
   /** V5 决策 B3：工具池可为函数（每轮解析——mcp_connect 注册新 MCP 工具后，同轮后续 block 也可找到）。 */
   tools: Tool[] | (() => Tool[]);
   /** 权限回调：返回 allow/deny（ask 已由上层 resolve）；缺省 = 不设权限限制 */
-  checkPermission?: (tool: Tool, input: unknown) => Promise<Decision>;
+  checkPermission?: (tool: Tool, input: unknown) => Promise<PermissionCheckResult>;
   onToolCall?: (name: string, input: unknown) => void;
   onToolResult?: (name: string, result: string) => void;
+  /** V6 决策 A1：PostToolUse hook——工具执行完成（成功/失败）后触发，带入参与结果。 */
+  onPostToolUse?: (name: string, input: unknown, result: string) => void;
+  /** V6 决策 D：工具轨迹回调——每个工具 settle（含未知/deny）时触发，供 headless JSON 审计。 */
+  onToolTrace?: (trace: ToolTrace) => void;
   /** 并发上限（仅作用于只读并行批），默认 10 */
   maxConcurrency?: number;
+}
+
+/** 单次工具调用轨迹（名 + 入参 + 结果 + 权限判定）。result 由上层截断。 */
+export interface ToolTrace {
+  name: string;
+  input: unknown;
+  result: string;
+  permission: Decision;
 }
 
 interface ExecutorItem {
@@ -38,6 +65,8 @@ interface ExecutorItem {
   safe: boolean;
   /** addTool 里解析的工具；null = 未知工具（直接回填提示串，不执行） */
   tool: Tool | null;
+  /** 权限判定：未知工具 / 被拒 = deny；无 checkPermission = allow */
+  permission: Decision;
   result: string | null;
   resolve: (r: string) => void;
   promise: Promise<string>;
@@ -76,6 +105,8 @@ export class StreamingToolExecutor {
       index,
       safe: tool?.isConcurrencySafe === true,
       tool,
+      // 无 checkPermission = 无权限限制 → allow；未知工具在下面改判 deny
+      permission: tool ? "allow" : "deny",
       result: null,
       resolve,
       promise,
@@ -88,9 +119,13 @@ export class StreamingToolExecutor {
     }
     this.opts.onToolCall?.(tu.name, tu.input);
     if (this.opts.checkPermission) {
-      const d = await this.opts.checkPermission(tool, tu.input);
-      if (d === "deny") {
-        this.settle(item, tool.denyMessage ?? `权限被拒绝: 未授权执行 ${tu.name}`);
+      const r = await this.opts.checkPermission(tool, tu.input);
+      item.permission = decisionOf(r);
+      if (item.permission === "deny") {
+        this.settle(
+          item,
+          denyReasonOf(r) ?? tool.denyMessage ?? `权限被拒绝: 未授权执行 ${tu.name}`,
+        );
         return;
       }
     }
@@ -101,6 +136,12 @@ export class StreamingToolExecutor {
   private settle(item: ExecutorItem, result: string): void {
     item.result = result;
     item.resolve(result);
+    this.opts.onToolTrace?.({
+      name: item.tu.name,
+      input: item.tu.input,
+      result,
+      permission: item.permission,
+    });
   }
 
   /** 队列推进：见文件头规则。执行是 fire-and-forget（不 await），让流式期间也能并行跑。 */
@@ -147,6 +188,8 @@ export class StreamingToolExecutor {
     } catch (e) {
       result = `工具执行错误: ${e instanceof Error ? e.message : String(e)}`;
     }
+    // V6 决策 A1：PostToolUse 在成功/失败后都触发（result 含错误文本）。
+    this.opts.onPostToolUse?.(item.tu.name, item.tu.input, result);
     this.settle(item, result);
   }
 

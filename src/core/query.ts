@@ -7,7 +7,6 @@ import type {
 } from "../providers/types.js";
 import { toToolSpecs } from "../tools.js";
 import type { Tool } from "../tools.js";
-import type { Decision } from "../permissions/types.js";
 import { isPromptTooLong } from "../utils/errors.js";
 import {
   COMPACT_MIN_MESSAGES,
@@ -17,7 +16,11 @@ import {
   normalizeToolPairing,
   spillOversizedResult,
 } from "./compact.js";
+import type { PermissionCheckResult, ToolTrace } from "./execute.js";
 import { StreamingToolExecutor } from "./execute.js";
+
+/** V6 决策 D：headless JSON 工具轨迹的 result 截断上限（全量在会话 JSONL）。 */
+export const TOOL_TRACE_RESULT_LIMIT = 2000;
 
 export interface RunQueryOptions {
   client: LLMClient;
@@ -32,8 +35,10 @@ export interface RunQueryOptions {
   onToolCall?: (name: string, input: unknown) => void;
   /** 工具执行完成后回调 */
   onToolResult?: (name: string, result: string) => void;
+  /** V6 决策 A1：PostToolUse hook——工具执行完成（成功/失败）后触发，带入参与结果。 */
+  onPostToolUse?: (name: string, input: unknown, result: string) => void;
   /** V2 权限回调：返回 allow/deny（ask 已由上层 resolve）；缺省 = 不设权限限制 */
-  checkPermission?: (tool: Tool, input: unknown) => Promise<Decision>;
+  checkPermission?: (tool: Tool, input: unknown) => Promise<PermissionCheckResult>;
   /** 流式请求的 transient 错误重试次数，默认 2（可用 RUN_AGENT_MAX_RETRIES 覆盖） */
   maxRetries?: number;
   /** V3 system prompt：首条 system 消息进请求、不进返回/持久化 */
@@ -58,6 +63,8 @@ export interface RunQueryResult {
   iterations: number;
   /** 本轮回调期间触发的压缩次数 */
   compacts: number;
+  /** V6 决策 D：本轮全部工具调用轨迹（名 + 入参 + 结果[截断 2000] + 权限），headless JSON 用。 */
+  toolCalls: ToolTrace[];
 }
 
 const DEFAULT_MAX_ITERATIONS = 25;
@@ -99,6 +106,8 @@ export async function runQuery(
   let spillSeq = 0;
   let iterations = 0;
   let reply = "";
+  // V6 决策 D：跨全部迭代的工具轨迹（headless JSON 审计用）
+  const toolCalls: ToolTrace[] = [];
 
   // 统一入队：同时进 messages 与 added（REPL 用 added 逐条持久化）
   const pushConversation = (m: LLMMessage): void => {
@@ -138,6 +147,18 @@ export async function runQuery(
     // 每次 stream 尝试新建一个：transient 重试/反应式压缩会丢弃旧尝试的已收集增量。
     let textParts: string[] = [];
     let toolUses: ToolUseBlock[] = [];
+    // V6 决策 D：本尝试的工具轨迹（与 textParts/toolUses 同生命周期——transient 重试丢弃旧尝试）；
+    // 尝试成功后并入全局 toolCalls。
+    let attemptCalls: ToolTrace[] = [];
+    const recordTrace = (t: ToolTrace): void => {
+      attemptCalls.push({
+        ...t,
+        result:
+          t.result.length > TOOL_TRACE_RESULT_LIMIT
+            ? `${t.result.slice(0, TOOL_TRACE_RESULT_LIMIT)}…（已截断）`
+            : t.result,
+      });
+    };
     let stopReason: StopReason = "end_turn";
     let attempt = 0;
     let executor: StreamingToolExecutor | null = null;
@@ -150,6 +171,9 @@ export async function runQuery(
         ...(opts.checkPermission ? { checkPermission: opts.checkPermission } : {}),
         ...(opts.onToolCall ? { onToolCall: opts.onToolCall } : {}),
         ...(opts.onToolResult ? { onToolResult: opts.onToolResult } : {}),
+        ...(opts.onPostToolUse ? { onPostToolUse: opts.onPostToolUse } : {}),
+        // 始终收集轨迹（返回 toolCalls 是 core 契约，非可选回调）
+        onToolTrace: recordTrace,
       });
       try {
         // system 拼到请求消息数组首条（不进 messages，适配器已会抽顶层/内联）
@@ -204,6 +228,7 @@ export async function runQuery(
               attempt = 0;
               textParts = [];
               toolUses = [];
+              attemptCalls = [];
               continue;
             }
           }
@@ -217,12 +242,14 @@ export async function runQuery(
           attempt = 0;
           textParts = [];
           toolUses = [];
+          attemptCalls = [];
           continue;
         }
         if (attempt >= maxRetries || !isTransientError(e)) throw e;
         attempt++;
         textParts = [];
         toolUses = [];
+        attemptCalls = [];
         await sleep(500 * 2 ** attempt); // 1s, 2s, …
       }
     }
@@ -248,9 +275,13 @@ export async function runQuery(
       pushConversation({ role: "tool", tool_use_id: toolUses[i]!.id, content });
     }
 
+    // V6 决策 D：轨迹并入全局——必须在 getResults 之后（onToolTrace 在 settle 时触发，
+    // 先合并会把仍在执行中的工具轨迹漏掉）。
+    toolCalls.push(...attemptCalls);
+
     if (stopReason === "end_turn") {
       // end_turn 下模型未请求工具（toolUses 应为空）；即便异常非空也保持原语义返回
-      return { messages, reply, iterations, added, compacts };
+      return { messages, reply, iterations, added, compacts, toolCalls };
     }
 
     if (stopReason === "tool_use") {
@@ -267,5 +298,5 @@ export async function runQuery(
     pushConversation({ role: "user", content: "[模型返回错误，请重试]" });
   }
 
-  return { messages, reply, iterations, added, compacts };
+  return { messages, reply, iterations, added, compacts, toolCalls };
 }

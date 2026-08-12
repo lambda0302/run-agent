@@ -46,13 +46,13 @@
 
 **A1. 事件与触发点(五类)**
 
-| 事件 | 触发点 | 行为 |
-| ---- | ------ | ---- |
-| `PreToolUse` | `makeCheckPermission` 内,engine 判定之后、最终决策之前 | 可返回 `permissionDecision` 覆盖判定(见 A4) |
-| `PostToolUse` | `execute.ts` settle 之后 | stdout 展示;带 tool_use + tool_result |
-| `SessionStart` | `runRepl` / `runOneShot` 入口 | stdout 展示 |
-| `SessionEnd` | REPL 退出 / one-shot 结束 | stdout 展示 |
-| `Stop` | 每轮 `runQuery` 结束(最终回复产出) | **stdout 注入下一轮 system 动态段** |
+| 事件           | 触发点                                                 | 行为                                        |
+| -------------- | ------------------------------------------------------ | ------------------------------------------- |
+| `PreToolUse`   | `makeCheckPermission` 内,engine 判定之后、最终决策之前 | 可返回 `permissionDecision` 覆盖判定(见 A4) |
+| `PostToolUse`  | `execute.ts` settle 之后                               | stdout 展示;带 tool_use + tool_result       |
+| `SessionStart` | `runRepl` / `runOneShot` 入口                          | stdout 展示                                 |
+| `SessionEnd`   | REPL 退出 / one-shot 结束                              | stdout 展示                                 |
+| `Stop`         | 每轮 `runQuery` 结束(最终回复产出)                     | **stdout 注入下一轮 system 动态段**         |
 
 - 触发点选择:**PreToolUse 挂在 `makeCheckPermission`**(REPL 与 one-shot 共用此入口,`runOneShot` 以 `ask=undefined` 调它,`index.ts` 的 `exploreCheckPermission` 是子查询通道不走 hook)——单点接线,不改 execute 主路径。
 - **PostToolUse 挂 execute settle**:`ExecuteOptions` 新增可选 `onPostToolUse?(item)`;`StreamingToolExecutor.settle` 里触发(未知工具/权限 deny 的 settle 也触发,带 result 为提示串)。MCP 工具与 plan 导航工具天然覆盖。
@@ -72,11 +72,12 @@
   {
     "hooks": {
       "PreToolUse": [
-        { "matcher": "Edit|Write|Delete", "hooks": [{ "type": "command", "command": "node ~/.run-agent-hooks/block-write.js" }] }
+        {
+          "matcher": "Edit|Write|Delete",
+          "hooks": [{ "type": "command", "command": "node ~/.run-agent-hooks/block-write.js" }]
+        }
       ],
-      "Stop": [
-        { "hooks": [{ "type": "command", "command": "echo done", "timeout": 5000 }] }
-      ]
+      "Stop": [{ "hooks": [{ "type": "command", "command": "echo done", "timeout": 5000 }] }]
     }
   }
   ```

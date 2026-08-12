@@ -8,7 +8,7 @@ import type {
   StreamOptions,
 } from "./types.js";
 
-const DEFAULT_MODEL = "claude-sonnet-5"; // 按当时最新主力模型调整
+export const DEFAULT_MODEL = "claude-sonnet-5"; // 按当时最新主力模型调整
 
 /**
  * 把内部统一消息转成 Anthropic 的 messages 数组。

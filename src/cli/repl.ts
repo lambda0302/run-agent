@@ -2,18 +2,25 @@ import * as readline from "node:readline";
 import { COMPACT_MIN_MESSAGES, maybeAutoCompact } from "../core/compact.js";
 import { buildSystemPrompt } from "../core/context.js";
 import type { SystemContext } from "../core/context.js";
+import type { PermissionCheckResult } from "../core/execute.js";
 import { runQuery } from "../core/query.js";
+import type { RunQueryResult } from "../core/query.js";
 import {
   hasPermissionsToUseTool,
   inputPath,
   isBuiltinReadOnlyTool,
 } from "../permissions/engine.js";
 import { resolveAsk } from "../permissions/prompt.js";
-import type { Decision, PermissionContext } from "../permissions/types.js";
+import type { PermissionContext } from "../permissions/types.js";
 import type { LLMMessage, LLMClient } from "../providers/types.js";
 import type { Tool } from "../tools.js";
 import type { PlanTools } from "../tools/plan_mode.js";
 import type { McpManager } from "../services/mcp/manager.js";
+import type { HookManager, PreToolUseDecision } from "../services/hooks/manager.js";
+import { readSkillBody } from "../services/skills/loader.js";
+import type { SkillRegistry } from "../services/skills/skill_tool.js";
+import type { CommandRegistry } from "../services/commands/loader.js";
+import { expandPromptTemplate, execLocalCommand } from "../services/commands/exec.js";
 import { appendMessage } from "../utils/sessionStorage.js";
 
 export interface AgentOptions {
@@ -21,6 +28,8 @@ export interface AgentOptions {
   /** V5 决策 B3：工具池可为函数（每轮重建，MCP 工具按需连接后动态注入）。 */
   tools: Tool[] | (() => Tool[]);
   maxTokens?: number;
+  /** V6 决策 D：ReAct 循环轮数上限（--max-turns），防 CI 失控；缺省 = 25。 */
+  maxIterations?: number;
   sessionFile: string;
   /** 续接/初始上下文（--resume 时非空） */
   initialMessages?: LLMMessage[];
@@ -43,6 +52,12 @@ export interface AgentOptions {
   mcpManager?: McpManager;
   /** V5 决策 B4：只读判定闭包（并入 MCP readOnlyHint）；缺省 = 内置只读 ∪ explore。 */
   readOnlyNames?: (name: string) => boolean;
+  /** V6 决策 A：HookManager（配置了 hooks 才存在；零配置不创建）。 */
+  hookManager?: HookManager;
+  /** V6 决策 B：技能注册表（有技能才存在）。装配 SkillTool + /skills、/<技能名> 斜杠命令。 */
+  skillRegistry?: SkillRegistry;
+  /** V6 决策 C：自定义命令注册表（有命令才存在）。装配 /commands、/<命令名> 斜杠命令。 */
+  commands?: CommandRegistry;
   /** 测试注入：readline 输入流（缺省 process.stdin）。生产不传。 */
   input?: NodeJS.ReadableStream;
 }
@@ -104,18 +119,22 @@ export function createHandlers(emit: (s: string) => void) {
 }
 
 /**
- * 组装 checkPermission：engine 判定 + 对 "ask" 弹交互确认。
+ * 组装 checkPermission：engine 判定 → PreToolUse hook 覆盖 → 对 "ask" 弹交互确认。
  * @param ask 可注入的提问函数——REPL 传 rl.question 复用同一 readline（杜绝双回显）。
  *            不传则用 resolveAsk 的缺省路径（one-shot 时 canPrompt=false 直接 deny，不弹）。
  * @param readOnlyNames 只读判定闭包（V5 决策 B4）。缺省 = 内置只读 ∪ explore；
  *            CLI 装配时并入 MCP readOnlyHint 名（manager.isReadOnly）。plan 下 explore 也放行（内部只用只读工具）。
+ * @param preToolUse V6 决策 A4：PreToolUse hook 回调（HookManager.onPreToolUse）。
+ *            engine 判定后执行；hook 决策可覆盖（ask→allow / allow→deny / ask→deny），
+ *            但 engine deny 是硬底线不可被 hook 放行。hook deny 的 reason 并入拒绝回填。
  */
 export function makeCheckPermission(
   ctx: PermissionContext,
   out: NodeJS.WritableStream,
   ask?: (question: string) => Promise<string>,
   readOnlyNames?: (name: string) => boolean,
-): (tool: Tool, input: unknown) => Promise<Decision> {
+  preToolUse?: (name: string, input: unknown) => Promise<PreToolUseDecision | undefined>,
+): (tool: Tool, input: unknown) => Promise<PermissionCheckResult> {
   const isReadOnlyName =
     readOnlyNames ?? ((name: string) => isBuiltinReadOnlyTool(name) || name === "explore");
   return async (tool, input) => {
@@ -128,6 +147,16 @@ export function makeCheckPermission(
       ctx.cwd,
       isReadOnlyName,
     );
+    const hook = preToolUse ? await preToolUse(tool.name, input) : undefined;
+    if (hook?.permissionDecision === "deny") {
+      // hook 拒绝：写入 out（展示）+ reason 进拒绝回填（模型可见）
+      const target = inputPath(input);
+      const reason = hook.permissionDecisionReason ?? "PreToolUse hook 拒绝";
+      out.write(`✗ 已拒绝执行 ${tool.name}${target ? ` ${target}` : ""}（hook: ${reason}）\n`);
+      return { decision: "deny", reason: `hook 拒绝: ${reason}` };
+    }
+    // hook 放行：engine 未 deny 时生效（engine deny 是硬底线，不可被 hook 解除）
+    if (hook?.permissionDecision === "allow" && d !== "deny") return "allow";
     if (d !== "ask") return d;
     const resolved = await resolveAsk(tool, input, ctx, ask);
     if (resolved === "deny") {
@@ -140,6 +169,36 @@ export function makeCheckPermission(
   };
 }
 
+/** V6 决策 A4：由 hookManager 构造 PreToolUse 回调；无 manager → undefined。 */
+function preToolUseHook(
+  hm: HookManager | undefined,
+): ((name: string, input: unknown) => Promise<PreToolUseDecision | undefined>) | undefined {
+  return hm ? (name, input) => hm.onPreToolUse(name, input) : undefined;
+}
+
+/** V6 决策 A1：PostToolUse 回调——触发 hook，合并输出展示（经 emit）。 */
+function postToolUseHook(
+  hm: HookManager | undefined,
+  emit: (s: string) => void,
+): ((name: string, input: unknown, result: string) => Promise<void>) | undefined {
+  if (!hm) return undefined;
+  return async (name, input, result) => {
+    const hookOut = await hm.onPostToolUse(name, input, result);
+    if (hookOut) emit(`${DIM}└ [hook] ${preview(hookOut)}${RESET}\n`);
+  };
+}
+
+/** V6 决策 A1：SessionStart/SessionEnd——触发 hook，合并输出展示（经 emit）。 */
+async function runSessionHook(
+  hm: HookManager | undefined,
+  kind: "start" | "end",
+  emit: (s: string) => void,
+): Promise<void> {
+  if (!hm) return;
+  const hookOut = kind === "start" ? await hm.onSessionStart() : await hm.onSessionEnd();
+  if (hookOut) emit(`${DIM}[session hook ${kind}] ${preview(hookOut)}${RESET}\n`);
+}
+
 /** 组装 runQuery 的公共选项（system/contextWindow/onCompact/...）。 */
 function queryOpts(opts: AgentOptions, system: string | undefined) {
   return {
@@ -147,6 +206,7 @@ function queryOpts(opts: AgentOptions, system: string | undefined) {
     tools: opts.tools,
     ...(opts.maxTokens ? { maxTokens: opts.maxTokens } : {}),
     ...(opts.maxRetries !== undefined ? { maxRetries: opts.maxRetries } : {}),
+    ...(opts.maxIterations !== undefined ? { maxIterations: opts.maxIterations } : {}),
     ...(system ? { system } : {}),
     ...(opts.contextWindow ? { contextWindow: opts.contextWindow } : {}),
     ...(opts.onCompact ? { onCompact: opts.onCompact } : {}),
@@ -154,21 +214,33 @@ function queryOpts(opts: AgentOptions, system: string | undefined) {
   };
 }
 
-/** 单次执行：读 prompt → 工具循环 → 返回最终回复文本。 */
-export async function runOneShot(opts: AgentOptions, prompt: string): Promise<string> {
+/** 单次执行：读 prompt → 工具循环 → 返回完整结果（reply + toolCalls 轨迹，headless JSON 用）。 */
+export async function runOneShot(opts: AgentOptions, prompt: string): Promise<RunQueryResult> {
   const out = opts.out ?? process.stdout;
+  const emit = (s: string) => out.write(s);
+  await runSessionHook(opts.hookManager, "start", emit);
+
   const messages: LLMMessage[] = [...(opts.initialMessages ?? [])];
   messages.push({ role: "user", content: prompt });
   await appendMessage(opts.sessionFile, messages[messages.length - 1]!);
 
   const system = opts.systemCtx ? await buildSystemPrompt(opts.systemCtx) : undefined;
   const checkPermission = opts.ctx
-    ? makeCheckPermission(opts.ctx, out, undefined, opts.readOnlyNames)
+    ? makeCheckPermission(
+        opts.ctx,
+        out,
+        undefined,
+        opts.readOnlyNames,
+        preToolUseHook(opts.hookManager),
+      )
     : undefined;
+  const postToolUse = postToolUseHook(opts.hookManager, emit);
+  opts.skillRegistry?.resetActive(); // V6 决策 B2：one-shot 也是完整 turn，先重置活跃技能
   const result = await runQuery(messages, {
     ...queryOpts(opts, system),
     ...(checkPermission ? { checkPermission } : {}),
-    ...createHandlers((s: string) => out.write(s)),
+    ...(postToolUse ? { onPostToolUse: postToolUse } : {}),
+    ...createHandlers(emit),
   });
   out.write("\n");
 
@@ -176,18 +248,36 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<st
   for (const m of result.added) {
     await appendMessage(opts.sessionFile, m);
   }
-  return result.reply;
+  // Stop + SessionEnd：one-shot 无下一轮，Stop 输出不注入（只触发）
+  await opts.hookManager?.onStop(result.reply);
+  await runSessionHook(opts.hookManager, "end", emit);
+  return result;
 }
 
 const HELP = [
   "run-agent REPL — 直接输入 prompt 开始，agent 会读/写/改/搜/执行并汇报。",
-  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入只读计划模式 · /mcp 查看/连接 MCP server · /help 帮助 · /exit 退出",
+  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入只读计划模式 · /mcp 查看/连接 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /help 帮助 · /exit 退出",
 ].join("\n");
+
+/** V6 决策 B3/C2：内置斜杠命令集合——技能/自定义命令与内置冲突时内置优先。 */
+const BUILTIN_SLASH = new Set([
+  "exit",
+  "quit",
+  "clear",
+  "compact",
+  "plan",
+  "help",
+  "mcp",
+  "skills",
+  "commands",
+]);
 
 /** 交互式 REPL 主循环。 */
 export async function runRepl(opts: AgentOptions): Promise<void> {
   const out = opts.out ?? process.stdout;
   let messages: LLMMessage[] = [...(opts.initialMessages ?? [])];
+  // V6 决策 A1：Stop hook 输出注入下一轮 system（每轮结束刷新）
+  let stopOutput: string | undefined;
   const terminal = Boolean(process.stdin.isTTY);
 
   const rl = readline.createInterface({
@@ -210,15 +300,17 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
     );
   };
   const checkPermission = opts.ctx
-    ? makeCheckPermission(opts.ctx, out, ask, opts.readOnlyNames)
+    ? makeCheckPermission(opts.ctx, out, ask, opts.readOnlyNames, preToolUseHook(opts.hookManager))
     : undefined;
+  const postToolUse = postToolUseHook(opts.hookManager, gate.emit);
 
   rl.on("SIGINT", () => {
     out.write("\n");
     rl.close();
   });
   rl.on("close", () => {
-    // 结束
+    // V6 决策 A1：SessionEnd 钩子（fire-and-forget；hook 的挂起子进程保持事件循环存活）
+    void runSessionHook(opts.hookManager, "end", gate.emit);
   });
 
   if (messages.length > 0) out.write(`${DIM}已续接 ${messages.length} 条历史消息${RESET}\n`);
@@ -238,7 +330,107 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
       promptLine();
       return;
     }
+    // V6：统一查询路径——普通 prompt 与 /技能命令都走这里（技能 body 作为 user 消息）
+    const runTurn = async (promptText: string): Promise<void> => {
+      messages.push({ role: "user", content: promptText });
+      await appendMessage(opts.sessionFile, messages[messages.length - 1]!);
+      opts.skillRegistry?.resetActive(); // V6 决策 B2：turn 边界重置活跃技能
+      // 每轮重建 system（日期/git 动态部分刷新；git 有 3s TTL 缓存）。
+      // V6 决策 A1：上一轮 Stop hook 输出注入动态段（hookOutput）。
+      const system = opts.systemCtx
+        ? await buildSystemPrompt(
+            opts.systemCtx,
+            stopOutput !== undefined ? { hookOutput: stopOutput } : {},
+          )
+        : undefined;
+      const result = await runQuery(messages, {
+        ...queryOpts(opts, system),
+        ...(checkPermission ? { checkPermission } : {}),
+        ...(postToolUse ? { onPostToolUse: postToolUse } : {}),
+        ...handlers,
+      });
+      out.write("\n");
+
+      // V6 决策 A1：Stop hook——每轮结束触发，输出注入下一轮 system
+      if (opts.hookManager) {
+        const hookOut = await opts.hookManager.onStop(result.reply);
+        stopOutput = hookOut ?? undefined;
+      }
+
+      // added 契约 + 数组替换：compact 可能重建消息数组，slice 已不可靠
+      messages = result.messages;
+      for (const m of result.added) {
+        await appendMessage(opts.sessionFile, m);
+      }
+      // 清晰的任务完成分隔线：明确一轮已结束，避免“任务完成后输入 y 被当成新 prompt 又跑一遍”
+      out.write(
+        `${GREEN}${DIVIDER}${RESET}\n${GREEN}✔ 任务完成${RESET}${DIM} — 可继续输入下一条 prompt（/exit 退出）${RESET}\n${GREEN}${DIVIDER}${RESET}\n`,
+      );
+      promptLine();
+    };
+
     if (input.startsWith("/")) {
+      // V6 决策 B3：技能斜杠命令——/skills 列清单；/<name> [args] 加载技能后执行。
+      // 内置命令优先（技能名与内置冲突时内置赢，与 MCP「内置优先」同语义）。
+      const skillName = input.slice(1).split(/\s+/, 1)[0] ?? "";
+      if (opts.skillRegistry && (input === "/skills" || input.startsWith("/skills "))) {
+        const lines = opts.skillRegistry.all.map(
+          (s) => `  /${s.name} — ${s.description}（${s.source === "user" ? "用户级" : "项目级"}）`,
+        );
+        const block =
+          lines.length > 0
+            ? lines.join("\n")
+            : "  （无可用技能：放 .run-agent/skills/<name>/SKILL.md（Trust）或 ~/.config/run-agent/skills/）";
+        out.write(`可用技能:\n${block}\n`);
+        promptLine();
+        return;
+      }
+      const skill =
+        opts.skillRegistry && !BUILTIN_SLASH.has(skillName)
+          ? opts.skillRegistry.find(skillName)
+          : undefined;
+      if (skill) {
+        const rest = input.slice(skillName.length + 1).trim();
+        out.write(`✓ 已加载技能 ${skill.name}，执行中…\n`);
+        await runTurn(
+          `[技能 ${skill.name}（${skill.description}）已加载]\n\n${readSkillBody(skill)}${rest ? `\n\n参数: ${rest}` : ""}`,
+        );
+        return;
+      }
+      // V6 决策 C2：自定义命令——/commands 列清单；/<name> [args] 展开模板或跑脚本。
+      // 与技能同语义：内置优先，自定义命令名与内置冲突时内置赢。
+      const cmdName = input.slice(1).split(/\s+/, 1)[0] ?? "";
+      if (opts.commands && (input === "/commands" || input.startsWith("/commands "))) {
+        const lines = opts.commands.all.map(
+          (c) =>
+            `  /${c.name} — ${c.type === "prompt" ? "prompt 模板" : `${c.ext} 脚本`}（${c.source === "user" ? "用户级" : "项目级"}）`,
+        );
+        const block =
+          lines.length > 0
+            ? lines.join("\n")
+            : "  （无自定义命令：放 .run-agent/commands/<name>.md|.py|.js|.ts（Trust）或 ~/.config/run-agent/commands/）";
+        out.write(`自定义命令:\n${block}\n`);
+        promptLine();
+        return;
+      }
+      const cmd =
+        opts.commands && !BUILTIN_SLASH.has(cmdName) ? opts.commands.find(cmdName) : undefined;
+      if (cmd) {
+        const rest = input.slice(cmdName.length + 1).trim();
+        const cwd = opts.systemCtx?.cwd ?? process.cwd();
+        if (cmd.type === "prompt") {
+          const { text } = expandPromptTemplate(cmd.template, rest, cwd);
+          out.write(`✓ 已加载命令 ${cmd.name}，执行中…\n`);
+          await runTurn(text);
+        } else {
+          out.write(`✓ 正在执行命令 ${cmd.name}…\n`);
+          const res = await execLocalCommand(cmd, rest, cwd, input);
+          out.write(`\n${res.output}\n`);
+          if (!res.ok) out.write(`✗ 命令 ${cmd.name} 失败（退出码 ${res.exitCode ?? "—"}）\n`);
+        }
+        promptLine();
+        return;
+      }
       // V5 决策 B2：/mcp 前缀子命令在 switch 之前处理（switch 是严格相等，`/mcp connect x`
       // 无法命中 case "/mcp"）
       if (input === "/mcp" || input.startsWith("/mcp ")) {
@@ -339,9 +531,20 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
           );
           break;
         }
-        case "/help":
-          out.write(`${HELP}\n`);
+        case "/help": {
+          // V6 决策 C2：/help 汇总内置 + 自定义命令
+          const extra =
+            opts.commands && opts.commands.all.length > 0
+              ? `\n自定义命令:\n${opts.commands.all
+                  .map(
+                    (c) =>
+                      `  /${c.name} — ${c.type === "prompt" ? "prompt 模板" : `${c.ext} 脚本`}`,
+                  )
+                  .join("\n")}`
+              : "";
+          out.write(`${HELP}${extra}\n`);
           break;
+        }
         default:
           out.write(`未知命令: ${input}（/help 查看）\n`);
       }
@@ -349,27 +552,10 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
       return;
     }
 
-    messages.push({ role: "user", content: input });
-    await appendMessage(opts.sessionFile, messages[messages.length - 1]!);
-
-    // 每轮重建 system（日期/git 动态部分刷新；git 有 3s TTL 缓存）
-    const system = opts.systemCtx ? await buildSystemPrompt(opts.systemCtx) : undefined;
-    const result = await runQuery(messages, {
-      ...queryOpts(opts, system),
-      ...(checkPermission ? { checkPermission } : {}),
-      ...handlers,
-    });
-    out.write("\n");
-
-    // added 契约 + 数组替换：compact 可能重建消息数组，slice 已不可靠
-    messages = result.messages;
-    for (const m of result.added) {
-      await appendMessage(opts.sessionFile, m);
-    }
-    // 清晰的任务完成分隔线：明确一轮已结束，避免“任务完成后输入 y 被当成新 prompt 又跑一遍”
-    out.write(
-      `${GREEN}${DIVIDER}${RESET}\n${GREEN}✔ 任务完成${RESET}${DIM} — 可继续输入下一条 prompt（/exit 退出）${RESET}\n${GREEN}${DIVIDER}${RESET}\n`,
-    );
-    promptLine();
+    await runTurn(input);
   });
+
+  // SessionStart 钩子必须放在 line handler 注册之后 await：注册前的 await 会让 test 同步
+  // 注入的早期输入在无 "line" 监听时被 readline 消费后丢弃（见 repl_mcp.test.ts 时序）。
+  await runSessionHook(opts.hookManager, "start", gate.emit);
 }

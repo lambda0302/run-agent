@@ -1,6 +1,6 @@
 # 用法
 
-> V1（0.1.0）：完整的 ReAct agent——单条 prompt 或交互式 REPL，可自动读/写/改文件、搜索、执行命令。
+> V6（0.6.0）：单条 prompt / 交互式 REPL + **headless（`--print` + `--json`）** + Hooks / Skills / 自定义命令。
 
 ## 安装
 
@@ -32,6 +32,9 @@ run-agent
 | `-b, --base-url <u>` | API 端点（`openai-compatible` 必填；Ollama 默认指向 `http://localhost:11434/v1`） |
 | `-k, --api-key <k>`  | 显式 API key（优先级最高）                                                        |
 | `-r, --resume`       | 续接最近一次会话                                                                  |
+| `--print <p>`        | headless：跑完这条 prompt 一次就退出（与位置参数 prompt 互斥）                    |
+| `--json`             | headless 结构化输出：stdout 只出 JSON，人类日志去 stderr（需 `--print`）          |
+| `--max-turns <n>`    | headless 的 ReAct 循环轮数上限（默认 25）                                         |
 
 ## 配置优先级
 
@@ -90,9 +93,10 @@ run-agent> 把 README 里 Hello 改成 Hi
 run-agent> /help
 ```
 
-- `/clear`：清空上下文
-- `/help`：帮助
-- `/exit` / `/quit`：退出
+- `/clear`：清空上下文 · `/compact`：压缩上下文
+- `/plan`：进入只读计划模式 · `/mcp`：查看/连接 MCP server
+- `/skills`：列出技能 · `/commands`：列出自定义命令（`/技能名`、`/命令名` 直接触发）
+- `/help`：帮助 · `/exit` / `/quit`：退出
 
 ## 会话与续接
 
@@ -102,3 +106,57 @@ run-agent> /help
 run-agent --resume            # 续接最近会话进入 REPL
 run-agent --resume "继续"      # 在最近会话上下文中追加一条 prompt
 ```
+
+## Headless（`--print` + `--json`）
+
+无需交互地让 agent 跑完一条 prompt 并退出，供脚本 / CI / 其它程序调用：
+
+```bash
+run-agent --print "重构 src/utils.ts"                    # 跑一次，人类日志在终端
+run-agent --print "读 README.md" --json > out.json        # 结构化 JSON，人类日志去 stderr
+run-agent --print "…" --json --max-turns 5               # 限制 ReAct 循环轮数
+```
+
+- `--print <prompt>` 与位置参数 prompt **互斥**（二选一，同时给 → 报错退出）。
+- 退出码：成功 `0`，出错（无 API key、flag 冲突、运行期错误）`1`。
+
+### JSON 契约
+
+`--json` 时 stdout **只有** JSON（人类日志全去 stderr），字段：
+
+```jsonc
+{
+  "version": "0.6.0", // 包版本
+  "provider": "openai-compatible",
+  "model": "gpt-4o-mini", // 实际生效模型（未显式指定 → 适配器默认）
+  "session": "20260812-…-xxxx.jsonl", // 会话文件名（basename）
+  "reply": "模型最终回复",
+  "messages": 4, // 本次会话消息总数（含 system 之外的所有轮）
+  "turns": 2, // ReAct 循环轮数（默认上限 25）
+  "tools": [
+    // 工具执行轨迹（按调用顺序）
+    {
+      "name": "read_file",
+      "input": { "file_path": "…" },
+      "result": "——— …———", // 截断到 2000 字符 + "…（已截断）"
+      "permission": "allow", // 本次判定的最终结果：allow / deny
+    },
+  ],
+  "errors": [], // 运行期错误（非空 → 退出码 1）
+}
+```
+
+- 工具轨迹在**记录时**截断到 2000 字符（`TOOL_TRACE_RESULT_LIMIT`），完整结果在会话 JSONL 里。
+- one-shot 无交互确认：写/执行类工具在 `default` 模式降级 `deny`，`--mode acceptEdits` 时
+  cwd 内写免确认 `allow`。
+- Hooks 在 headless 下同样触发（`SessionStart`/`Stop`/`PreToolUse` 等）。
+
+## 可编程化（0.6.0）
+
+- **Hooks**：五类事件（`PreToolUse`/`PostToolUse`/`SessionStart`/`SessionEnd`/`Stop`）挂命令或
+  HTTP 回调，配置 `~/.config/run-agent/settings.json` + `.run-agent/settings.json`（Trust）。
+  见 [hooks.md](hooks.md)。
+- **Skills**：`.run-agent/skills/<name>/SKILL.md`（Trust）或 `~/.config/run-agent/skills/`，
+  模型用 `SkillTool` 加载执行，或 REPL 里 `/技能名`。见 [skills.md](skills.md)。
+- **自定义命令**：`.run-agent/commands/<name>.md|.py|.js|.ts`（Trust）或
+  `~/.config/run-agent/commands/`，REPL 里 `/命令名`。见 [commands.md](commands.md)。

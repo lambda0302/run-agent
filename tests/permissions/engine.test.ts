@@ -377,6 +377,17 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     expect(hasPermissionsToUseTool("remember", input, "default", deny)).toBe("deny");
   });
 
+  // ── SkillTool（V6 技能加载）──
+  it("SkillTool（无路径入参，只读加载技能）：default/acceptEdits/plan 全 allow → headless 免确认", () => {
+    const input = { name: "code-review", args: { target: "src" } };
+    expect(hasPermissionsToUseTool("SkillTool", input, "default", RULES)).toBe("allow");
+    expect(hasPermissionsToUseTool("SkillTool", input, "acceptEdits", RULES)).toBe("allow");
+    expect(hasPermissionsToUseTool("SkillTool", input, "plan", RULES)).toBe("allow");
+    // 用户 deny 规则仍可收口（engine 硬底线语义不变）
+    const deny: PermissionRule[] = [{ tool: "SkillTool", action: "deny" }];
+    expect(hasPermissionsToUseTool("SkillTool", input, "default", deny)).toBe("deny");
+  });
+
   // ── 用户规则 ──
   it("用户 allow 规则：显式放行 run_bash（default 下也 allow）", () => {
     const rules: PermissionRule[] = [{ tool: "run_bash", action: "allow" }];
