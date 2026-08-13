@@ -95,7 +95,7 @@ TUI 打磨（Ink/React）· IDE 插件（VS Code/Neovim）· 远程/沙箱（Doc
 ```
 V0 项目地基 ─→ V1 ReAct MVP + 多提供商 + 首个release ─→ V2 安全并发 + Trust ─→ V3 记忆上下文
                                                                                       │
-V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+并发强化 ←─ V4 代码理解
+V9 发布与生态 ←─ V8 系统能力完善 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+并发强化 ←─ V4 代码理解
 ```
 
 | 版本 | 主题                  | 核心目标                              | 用户点名功能                          |
@@ -108,7 +108,8 @@ V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+
 | V5   | Plan + MCP + 并发强化 | 计划先行 + 标准协议 + 并行            | **Plan and Execute + MCP + 并发强化** |
 | V6   | 可编程化              | Hooks/Skills/命令/Headless            | ——                                    |
 | V7   | 多 Agent              | coordinator+specialist 编排           | **multiAgent**                        |
-| V8   | 发布与生态            | 评测公开、TUI/IDE、社区运营           | ——                                    |
+| V8   | 系统能力完善          | 权限加固 + 可靠性 + 真实模型验证      | **权限重构（expected-permissions.md）** |
+| V9   | 发布与生态            | 评测公开、TUI/IDE、社区运营           | ——                                    |
 
 ---
 
@@ -275,9 +276,29 @@ V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+
 
 ---
 
-### V8 —— 发布与生态（持续）
+### V8 —— 系统能力完善（权限重构后正式启动）
 
-> **状态（2026-08-12）：暂缓，不安排。** V7 Agent 能力已完整交付（0.7.0–0.7.2，DoD 仅剩需 key 的真实模型手动验证）；V8 全部是生态/TUI/IDE/评测条目，与 Agent 功能无关。**先做 V7 权限加固（docs/Bug_V7.md 的 6 条待修，P1/P3 优先）并跑完真实模型验证，V8 之后再评估。** 会话切换 / select UI（V2.5 推迟项）归本桶。
+> **状态（2026-08-13）：0.8.0 已发布。** 原 V8「发布与生态」整体顺延为 V9，V8 号专做**系统能力完善**——
+> 权限加固、可靠性、真实模型验证、性能稳定性等工程强化，后续此类条目一律归本桶。本次权限重构
+> （`docs/expected-permissions.md` 实现）即 V8 首个交付，已随 **0.8.0** 发布（`docs/permissions.md`、
+> SECURITY.md、CLAUDE.md、README、CHANGELOG 已同步）。
+
+- **权限重构（`expected-permissions.md`，已实现）**：`run_bash` 从「一律问」改为**六分类影响半径判定**
+  （`BashDanger`：`dangerous` 硬拒 / `readonly` R0 闭集自动 allow / `network`·`local-exec`·`http-get`·`write`
+  兜底 ask）；判定链**收口前置单线**（用户 deny → 内置危险命令 → 命令文本危险段 → 记忆豁免 → 路径危险段
+  → plan 分支 → 导航工具 → 用户 allow → 白名单兜底）；P1 堵 plan 绕过、P2 acceptEdits 只预授权
+  `write_file`/`edit_file`、P3 用户 deny 最前、P4 危险命令变体（`git -C` 强推 / `dd of=//dev` / 管道 rm）、
+  P5 三目录段命令文本收口（`.git`/`.claude`/`.run-agent`）；同步 verification / verify 的 classify 语义。
+  测试 530 用例 + typecheck + lint 全绿；`docs/permissions.md`、CLAUDE.md 已同步。
+- **V7 权限遗留（`docs/Bug_V7.md` 待修，P1/P3 优先）**：修完并入 V8。
+- **真实模型手动验证（需 key）**：六分类下 REPL 实际弹窗行为、verification 放行/拒绝、R0 自动放行、
+  plan 下危险段 deny。
+- **后续系统能力完善桶**：权限 / 可靠性 / Bug 修复 / 性能稳定性等工程强化条目在此积累。
+
+### V9 —— 发布与生态（持续）
+
+> **状态（2026-08-13）：顺延。** 原 V8「发布与生态」整体顺延为 V9，V8 号让给系统能力完善（权限重构）。
+> 会话切换 / select UI（V2.5 推迟项）归本桶。
 
 **目标**：从"能用"到"好用、有社区、有第三方信任"。
 
@@ -346,4 +367,5 @@ V8 发布与生态 ←─ V7 多Agent ←─ V6 可编程化 ←─ V5 Plan+MCP+
 | V5   | 0.5.0  | Plan 模式 + MCP + 流式并发                         | 接上 1 个 MCP server                        |
 | V6   | 0.6.0  | Hooks + Skills + 命令 + Headless                   | CI 无头跑通出 JSON                          |
 | V7   | 0.7.0  | 子 agent + coordinator                             | 多 agent 分工完成跨模块任务                 |
-| V8   | 1.0.0+ | TUI + IDE + 沙箱 + 评测 + 发布流水线               | 过 benchmark，可远程部署                    |
+| V8   | 0.8.0  | 权限重构（六分类）+ 系统能力完善 + 真实模型验证      | 六分类稳定、Bug_V7 待修清零                  |
+| V9   | 1.0.0+ | TUI + IDE + 沙箱 + 评测 + 发布流水线               | 过 benchmark，可远程部署                    |

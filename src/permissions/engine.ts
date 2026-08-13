@@ -1,8 +1,9 @@
 /**
  * V3 权限判定引擎（零依赖，纯函数）。
- * 判定顺序（V4.5 决策 D，bypass 删除后；V5 决策 A1 加 plan 分支、B3 加 mcp_connect 免确认）：
- *   内置危险命令 → plan 分支（强制只读）→ 导航工具（enter/exit_plan_mode / mcp_connect 免确认）
- *   → 用户 deny → 专属通道 → 危险目录 → bash 正则 → 用户 allow → 白名单(cwd) → 兜底 ask。
+ * 判定顺序（V4.5 决策 D 演进 + V5 决策 A1 加 plan 分支 + V7.5 收口前置单线管线）：
+ *   用户 deny（P3：先于一切内置放行，含导航工具）→ 内置危险命令（classify dangerous）
+ *   → 命令文本危险段（.run-agent/.git/.claude，/i）→ 记忆读专属通道 → 路径危险段（P1：plan 下也跑）
+ *   → plan 分支（强制只读，读侧与 default 共享）→ 导航工具 → 用户 allow → 白名单(cwd) → 兜底 ask。
  * 对齐 Claude Code 的 hasPermissionsToUseTool 混合模型，但更保守：公开项目误拦比漏拦安全。
  */
 import { realpathSync } from "node:fs";
@@ -16,12 +17,12 @@ import type { Decision, PermissionMode, PermissionRule } from "./types.js";
 const DENY_DIR_SEGMENTS = new Set([".git", ".claude", ".run-agent"]);
 
 /**
- * run_bash 的命令文本里引用 `.run-agent` 段 → 同样收口（agent 自身目录对模型完全只读）。
- * 只收 `.run-agent`：不收 `.git`（git 命令文本里大量合法出现，如 `git log`、`.gitignore`）、`.claude`。
- * 前缀约束避免误伤普通文本里的 "run-agent"；后缀排除 `.run-agent-backup` 这类相似目录名。
+ * run_bash 的命令文本里引用危险目录段 → 同样收口（P5：三目录段 + `/i`，agent 自身目录/版本库
+ * 元数据/配置对模型完全只读）。后缀 `(?![\w-])` 排除 `.gitignore`/`.gitattributes`/
+ * `.run-agent-backup` 这类相似文件名（`.git` 后跟 word char 即不命中）；前缀约束避免误伤普通文本。
  * 定位：第二道防线（尽力而为，不承诺穷尽 shell 拼接绕过——见 Plan_V4.5 决策 E 4）。
  */
-const AGENT_DIR_BASH_RE = /(?<=^|[\s\\/'"`=(;|&])\.run-agent(?![\w-])/;
+export const DENY_BASH_SEGMENTS_RE = /(?<=^|[\s\\/'"`=(;|&])\.(run-agent|git|claude)(?![\w-])/i;
 
 /** 只读工具：default 模式下免确认。repo_map 为 0.4.1 只读定位工具。
  *  SkillTool 为 V6 技能加载（只回填 body 文本、无副作用）：必须归只读，
@@ -52,41 +53,112 @@ export function isMemoryReadExempt(tool: string, target: string, isTrusted: bool
   return false;
 }
 
-export type BashDanger = "safe" | "risky" | "dangerous";
+/**
+ * bash 命令影响半径分类（近期落地版，见 docs/expected-permissions.md §2）：
+ *   - `readonly`  R0 纯只读（闭集白名单，自动 allow）——engine / verification / verify 全部放行
+ *   - `local-exec` R3a 本地执行（解释器跑脚本/检查命令）——engine ask；verification 放行（跑构建/测试/lint）
+ *   - `http-get`  R4a 普通网络只读采样（curl 到 stdout，无写文件）——engine ask；verification 放行（curl 采样页面）
+ *   - `network`   R4a 网络副作用（git 拉/推/克隆、装依赖、wget/gh）——engine ask；verification deny
+ *   - `write`     R1 项目内写 / 重定向写 / 无法证明安全（兜底）——engine ask；verification deny
+ *   - `dangerous` R2 系统级写 / R3b 远程拉取执行 / R4b 发布强推——engine deny（任何规则/模式不可解除）
+ * git 系列刻意不归 `readonly`：仓库级 `.git/config` 可定义 alias/pager/external-diff 执行任意命令，
+ * 恶意仓库能在只读子命令（status/log/diff）下注入执行——一律走 `write` 兜底 ask，用户可配 allow 规则。
+ */
+export type BashDanger = "readonly" | "local-exec" | "http-get" | "network" | "write" | "dangerous";
 
-/** 危险命令：命中即内置 deny（覆盖 `rm -rf` 根目录、格式化、强推、发布包、关机重启等）。
- *  bypass 删除后成为最高级、任何规则/模式不可解除的保护。 */
+/** 危险命令（R2 系统写 / R3b 远程拉取执行 / R4b 发布强推）：命中即内置 deny。
+ *  bypass 删除后成为最高级、任何规则/模式不可解除的保护。
+ *  注意：rm 目标以 / 或 ~ 开头即命中；不接 \b，否则 "rm -rf /" / "rm -rf ~"（目标在串尾）会漏掉。 */
 const DANGEROUS_PATTERNS: RegExp[] = [
-  // 注意：目标以 / 或 ~ 开头即命中；不接 \b，否则 "rm -rf /" / "rm -rf ~"（目标在串尾）会漏掉
-  /^\s*rm\s+(?:-[a-z]*[rR][a-z]*\s+)?(\/|~)/i,
-  // sudo 前缀的根删除（"sudo rm -rf /var" 等）同样危险
-  /\bsudo\b.*\brm\s+(?:-[a-z]*[rR][a-z]*\s+)?(\/|~)/i,
+  // R2 系统级写：根删除（含 `echo x | rm -rf /` 管道变体，P4 补齐；sudo 前缀并入）
+  /(?:^\s*|[;&|]\s*)(?:sudo\s+)?rm\s+(?:-[a-z]*[rR][a-z]*\s+)?(\/|~)/i,
+  // R2：磁盘格式化
   /\b(mkfs|fdisk|mkswap|format)\b/i,
-  /\bdd\b.*\bof=(\/dev|\/etc|\/var)\b/i,
-  /git\s+push\b.*(--force\b|-[a-z]*f\b)/i,
-  /\b(npm|pnpm|yarn)\s+(publish|prune)\b/i,
+  // R2：dd 到设备/系统路径（P4：`of=//dev` 这类双斜杠变体也要拦）
+  /\bdd\b.*\bof=(?:\/\/)?\/?(?:dev|etc|var)\b/i,
+  // R2：关机重启
   /^\s*(shutdown|reboot|halt|poweroff)\b/i,
+  // R3b：远程拉取执行（curl|sh / wget|bash）
+  /(?:^|[;&|]\s*)(curl|wget)\b.*\s\|\s*(?:sh|bash)\b/i,
+  // R4b：git 强推（P4：`git -C repo push --force` 这类前置参数变体）与发布包
+  // `.*\bpush\b`：git 后允许任意参数串到 push 子命令（含 -C 双 token 参数形态）；
+  // 代价是 `git log -- git push --force` 这类嵌套文本也会命中——方向是更严（deny），可接受
+  /git\s+.*\bpush\b.*(--force\b|-[a-z]*f\b)/i,
+  /\b(npm|pnpm|yarn)\s+(publish|prune)\b/i,
+  // R4b：hard reset（丢弃工作区/历史，破坏性同强推）
+  /\bgit\s+.*\breset\s+--hard\b/i,
 ];
 
-/** 风险命令：default/acceptEdits 下 ask（具体路径删除、sudo、curl|sh、重定向写系统目录、hard reset）。 */
-const RISKY_PATTERNS: RegExp[] = [
-  /\brm\b.*(-[a-z]*[rfF][a-z]*|-[a-z]*[rfF])\b/i,
+/** R3a 本地执行：解释器 / 包管理器脚本 / 源码加载。engine ask（执行任意代码影响半径大）。 */
+const LOCAL_EXEC_PATTERNS: RegExp[] = [
+  /^\s*(node|nodejs|npm|npx|pnpm|yarn|bun|deno|python|python3|pip|pip3|perl|php|ruby|bash|sh|zsh|ksh|fish|pwsh|powershell|eval|source|nohup|env)\b/i,
+  // `./script.sh` 直接执行当前目录脚本
+  /^\s*\.\//i,
+];
+
+/** R4a 网络副作用：git 拉/推/克隆、装依赖、wget（默认写文件）/gh。engine ask；verification deny。 */
+const NETWORK_PATTERNS: RegExp[] = [
+  /\bgit\s+(fetch|pull|clone|push|ls-remote)\b/i,
+  /^\s*(npm|pnpm|yarn)\s+(install|ci|add|login|logout|ping|view|search)\b/i,
+  /^\s*(wget|gh)\b/i,
+];
+
+/** R1 项目内写 / 变更命令 + 重定向写。engine ask；verification deny。 */
+const WRITE_PATTERNS: RegExp[] = [
+  /\brm\b/i,
   /\bsudo\b/i,
-  /(^|[;&|]\s*)(curl|wget)\b.*\s\|\s*(?:sh|bash)\b/i,
-  />>?\s+(\/etc|\/var|\/bin|\/usr|\/boot)\//i,
-  // 不接尾部 \b：否则 "git checkout ."（点在串尾）会漏掉
-  /\b(git\s+reset\s+--hard|git\s+checkout\s+\.)/i,
+  /\b(mv|mkdir|touch|cp|rmdir|ln|chmod|chown|truncate|install)\b/i,
+  /\b(sed|awk)\b/i, // sed -i / awk 写
+  /\b(git|hg|svn)\s+(add|commit|rm|mv|checkout|reset|merge|rebase|tag|branch|init|apply|am|clean|stash)\b/i,
+  />>?/, // 重定向写
 ];
 
 /**
- * 语义化分类 bash 命令。规则保守：拿不准就往上调一档（risky），宁 ask 勿漏。
- * 只识别字符串模式；PowerShell 语法（Remove-Item 等）走 RISKY 之外的正则未命中时按 safe 处理，
- * 由用户规则收口（见 Plan_V2 §6.4）。
+ * R0 闭集白名单：可证明无副作用的只读命令（自动 allow，全模式共享）。
+ * 闭集证明制的最小形态：命令 ∈ 闭集 且 无管道/重定向/命令替换/子 shell/逻辑符 且 参数不越界。
+ * 只收 ls/pwd/echo/cat（git 因仓库级 alias 注入面不入；PowerShell 全名 Get-ChildItem 等走 ask）。
+ */
+function isReadonlyBashCommand(cmd: string): boolean {
+  const trimmed = cmd.trim();
+  // 任何管道/重定向/命令替换/子 shell/换行/逻辑符 → 不算只读
+  if (/[|&;<>`$(){}\n]/.test(trimmed)) return false;
+  if (/^pwd\s*$/.test(trimmed)) return true;
+  // ls 允许任意 flag/参数（仅列出无副作用）
+  if (/^ls(?:\s+-[A-Za-z]+)*(?:\s+[^\s]+)*$/.test(trimmed)) return true;
+  if (/^echo\s+\S+(\s+\S+)*$/.test(trimmed)) return true;
+  // cat 严格单参数：纯相对路径（拒绝绝对/越界/展开/通配符）
+  const cat = /^cat\s+([^\s]+)$/.exec(trimmed);
+  if (cat) {
+    const arg = cat[1]!;
+    if (arg.startsWith("/") || arg.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(arg)) return false; // 绝对路径
+    if (arg.startsWith("~") || arg.startsWith("$")) return false; // 展开 / 环境变量
+    if (arg.includes("..") || /[*?[\]]/.test(arg)) return false; // 越界 / 通配符
+    return true;
+  }
+  return false;
+}
+
+/** R4a 只读采样：curl 到 stdout（无 -o/-O/-J/-C 写文件）。engine ask；verification 放行（curl 采样页面）。 */
+function isHttpGetCommand(cmd: string): boolean {
+  if (!/^\s*curl\b/i.test(cmd)) return false;
+  if (/\s-(?:o|O|J|C)\b/i.test(cmd)) return false; // 下载到文件 → 归 write（有副作用）
+  return true;
+}
+
+/**
+ * 语义化分类 bash 命令。规则保守：拿不准就往下调一档（写 → ask），宁 ask 勿漏。
+ * 只识别字符串模式；PowerShell 别名/全名（Remove-Item、Get-ChildItem 等）走模式未命中时
+ * 归 `write` 兜底 ask，由用户规则收口（见 Plan_V2 §6.4）。
  */
 export function classifyBashCommand(cmd: string): BashDanger {
   if (DANGEROUS_PATTERNS.some((re) => re.test(cmd))) return "dangerous";
-  if (RISKY_PATTERNS.some((re) => re.test(cmd))) return "risky";
-  return "safe";
+  if (isReadonlyBashCommand(cmd)) return "readonly";
+  // network 先于 local-exec：`npm install` 归 network（装依赖副作用），`npm test` 归 local-exec
+  if (NETWORK_PATTERNS.some((re) => re.test(cmd))) return "network";
+  if (LOCAL_EXEC_PATTERNS.some((re) => re.test(cmd))) return "local-exec";
+  if (isHttpGetCommand(cmd)) return "http-get";
+  if (WRITE_PATTERNS.some((re) => re.test(cmd))) return "write";
+  return "write"; // 兜底：无法证明安全 → 按写处理（engine 下 ask）
 }
 
 /** 从工具入参中取"目标路径"（file_path / path / cwd），展开 `~` 后 resolve 为绝对路径。 */
@@ -253,17 +325,26 @@ function ruleMatches(
   return true;
 }
 
+/** P2 收窄：acceptEdits 只预授权 cwd 内的路径写工具（write_file/edit_file）。
+ *  无路径工具（remember/verify）、MCP 写工具、其它有路径工具在 acceptEdits 下不再无条件放行。 */
+const PATH_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
+
 /**
  * 判定一次工具调用是否允许。纯函数：ask 的处理（确认/降级）在 prompt 层，不在此。
- * 判定顺序（决策 D）：
- *   1. 内置危险命令（run_bash → DANGEROUS_PATTERNS）→ deny（最高级，任何规则/模式不可覆盖）
- *   2. 用户 deny 规则 → deny（用户显式 deny 优先于一切内置放行）
- *   3. 专属通道：isMemoryReadExempt（只读 × .run-agent/memory/** × Trust）→ allow
- *   4. 危险目录段（.git/.claude/.run-agent，未豁免）→ deny（内置，规则不可覆盖）
- *   5. run_bash AGENT_DIR_BASH_RE → deny（第二道防线，尽力而为）
- *   6. 用户 allow 规则 → allow（cwd 外访问的唯一授权通道；对 cwd 内保留"始终允许"语义）
- *   7. 白名单 + 模式兜底：run_bash 一律 ask；Windows 可疑路径 → ask；无路径工具按 V2 语义；
- *      路径在 cwd 内 → 只读 allow / acceptEdits 写 allow / default 写 ask；cwd 外 → 只读也 ask
+ * 判定顺序（收口前置单线管线，P1/P3/P5 修复后的稳定语义）：
+ *   1. 用户 deny 规则 → deny（P3：先于一切内置放行，含导航工具）
+ *   2. 内置危险命令（classify dangerous：R2/R3b/R4b）→ deny（任何规则/模式不可覆盖）
+ *   3. 命令文本危险段（.run-agent/.git/.claude，/i）→ deny（第二道防线，尽力而为）
+ *   4. 记忆读专属通道（只读 × .run-agent/memory/** × Trust）→ allow
+ *   5. 路径危险段（.git/.claude/.run-agent，未豁免）→ deny（P1：plan 下也跑）
+ *   6. plan 分支：enter_plan_mode allow / exit_plan_mode ask / 只读 cwd 内 allow、cwd 外 ask /
+ *      写·执行·verify·remember·MCP 非只读 deny（读侧与 default 共享，见 3-5）
+ *   7. 导航工具（非 plan）免确认（enter/exit_plan_mode / mcp_connect）
+ *   8. 用户 allow 规则 → allow（cwd 外访问的唯一授权通道；对 cwd 内保留"始终允许"语义）
+ *   9. 白名单 + 模式兜底：run_bash 按 classify——readonly 自动 allow、其余 ask
+ *      （acceptEdits 不放行 bash）；Windows 可疑路径 → ask；无路径工具 readOnlyNames → allow
+ *      否则 ask（P2：acceptEdits 不再放行）；cwd 内 readOnly → allow / acceptEdits 仅
+ *      write_file·edit_file → allow / default 写 ask；cwd 外 → 只读也 ask
  * @param isTrusted 记忆读豁免的 Trust 门控；缺省 false（未传 = 无豁免）。
  * @param cwd 工作目录白名单边界；缺省 process.cwd()。
  */
@@ -276,26 +357,44 @@ export function hasPermissionsToUseTool(
   cwd = process.cwd(),
   readOnlyNames: (name: string) => boolean = isBuiltinReadOnlyTool,
 ): Decision {
-  // 1. 内置危险命令
-  if (tool === "run_bash" && classifyBashCommand(bashCommand(input) ?? "") === "dangerous") {
+  const p = inputPath(input);
+  const forms = p ? pathForms(p) : undefined;
+  const cmd = tool === "run_bash" ? bashCommand(input) ?? "" : undefined;
+  const bashDanger = cmd !== undefined ? classifyBashCommand(cmd) : undefined;
+
+  // 1. 用户 deny 规则（P3：先于一切内置放行——用户显式 deny 优先级最高，含导航工具）
+  for (const rule of rules) {
+    if (rule.action === "deny" && ruleMatches(rule, tool, input, forms)) return "deny";
+  }
+
+  // 2. 内置危险命令（R2/R3b/R4b → classify dangerous；最高级，任何规则/模式不可覆盖）
+  if (bashDanger === "dangerous") return "deny";
+
+  // 3. 命令文本危险段（P5：三目录段 + /i，agent 自身目录/版本库/配置对模型完全只读）
+  if (cmd !== undefined && DENY_BASH_SEGMENTS_RE.test(cmd)) return "deny";
+
+  // 4. 专属通道：记忆读豁免。所有形态都必须是记忆目录才算豁免
+  //    （防 `.run-agent/memory/out` → `/etc/passwd` 这类 symlink 指向记忆外的换名逃逸）。
+  if (forms && forms.every((f) => isMemoryReadExempt(tool, f, isTrusted))) {
+    return "allow";
+  }
+
+  // 5. 路径危险段（小写化比较，任一形态命中即 deny；P1：plan 下也跑——收口前置单线）
+  if (forms && forms.some(hasDeniedDirSegment)) {
     return "deny";
   }
 
-  const p = inputPath(input);
-  const forms = p ? pathForms(p) : undefined;
-
-  // V5 决策 A1：plan 分支（在危险命令检查后、其余判定前——plan 是最高优先级的一档状态，
-  // 写/执行一律 deny，不受用户模式影响）。判定顺序见文件头注释。
+  // 6. V5 决策 A1：plan 分支（读侧已与 default 共享——危险段/记忆豁免在第 3-5 步前置处理；
+  //    写/执行一律 deny，不受用户模式影响）。判定顺序见文件头注释。
   if (mode === "plan") {
     // enter_plan_mode 放行（它自身处理「已在 plan 中」报错）
     if (tool === "enter_plan_mode") return "allow";
     // exit_plan_mode 返回 ask：engine 放行工具本身，用户审批由 repl 的 ask 弹窗负责
     if (tool === "exit_plan_mode") return "ask";
     // 只读探索（readOnlyNames 覆盖内置只读 + explore + MCP 只读 hint）：
-    //   无路径入参（explore/repo_map）→ allow；cwd 内 / 记忆读豁免 → allow；cwd 外 → ask
+    //   无路径入参（explore/repo_map）→ allow；cwd 内 → allow；cwd 外 → ask
     if (readOnlyNames(tool)) {
       if (!p) return "allow";
-      if (forms && forms.every((f) => isMemoryReadExempt(tool, f, isTrusted))) return "allow";
       if (pathInCwd(p, cwd)) return "allow";
       return "ask";
     }
@@ -303,51 +402,36 @@ export function hasPermissionsToUseTool(
     return "deny";
   }
 
-  // 导航工具（非 plan 模式）：模式切换免权限确认；「不在 plan 模式」的报错语义在工具层。
-  // mcp_connect 同样免确认（V5 决策 B3：用户写好配置 = 已授权；项目级配置仅 Trust 加载是第二道门）。
+  // 7. 导航工具（非 plan 模式）：模式切换免权限确认；「不在 plan 模式」的报错语义在工具层。
+  //    mcp_connect 同样免确认（V5 决策 B3：用户写好配置 = 已授权；项目级配置仅 Trust 加载是第二道门）。
   if (tool === "enter_plan_mode" || tool === "exit_plan_mode" || tool === "mcp_connect")
     return "allow";
 
-  // 2. 用户 deny 规则（优先于一切内置放行）
-  for (const rule of rules) {
-    if (rule.action === "deny" && ruleMatches(rule, tool, input, forms)) return "deny";
-  }
-
-  // 3. 专属通道：记忆读豁免。所有形态都必须是记忆目录才算豁免
-  //    （防 `.run-agent/memory/out` → `/etc/passwd` 这类 symlink 指向记忆外的换名逃逸）。
-  if (forms && forms.every((f) => isMemoryReadExempt(tool, f, isTrusted))) {
-    return "allow";
-  }
-
-  // 4. 危险目录段（小写化比较，任一形态命中即 deny）
-  if (forms && forms.some(hasDeniedDirSegment)) {
-    return "deny";
-  }
-
-  // 5. run_bash 命令文本引用 `.run-agent`
-  if (tool === "run_bash" && AGENT_DIR_BASH_RE.test(bashCommand(input) ?? "")) {
-    return "deny";
-  }
-
-  // 6. 用户 allow 规则（cwd 外唯一授权通道；也可显式放行 run_bash 等）
+  // 8. 用户 allow 规则（cwd 外唯一授权通道；也可显式放行 run_bash 等）
   for (const rule of rules) {
     if (rule.action === "allow" && ruleMatches(rule, tool, input, forms)) return "allow";
   }
 
-  // 7. 白名单 + 模式兜底
-  if (tool === "run_bash") return "ask";
+  // 9. 白名单 + 模式兜底
+  if (cmd !== undefined) {
+    // run_bash（plan 分支已在上层 deny 全部 bash）：R0 闭集白名单 → allow（default/acceptEdits 共享）；
+    // 其余一律 ask（acceptEdits 不放行非 R0 bash）
+    if (bashDanger === "readonly") return "allow";
+    return "ask";
+  }
   if (p && forms && forms.some((f) => suspiciousOutsideCwd(f, cwd))) return "ask";
   if (!p) {
     // 无路径入参的工具（repo_map/explore/verify/remember/glob 无 path 等）：不参与 cwd 边界。
     // 用 readOnlyNames（V5 决策 B4）而非硬编码 READ_ONLY_TOOLS：让 REPL/CLI 装配的扩展闭包
     // （协调者三件套 agent/send_message/task_stop + explore + MCP readOnlyHint）在 default 下也免确认。
-    if (mode === "acceptEdits") return "allow";
+    // P2：acceptEdits 不再无条件放行无路径工具（remember/verify 等 → ask）。
     if (readOnlyNames(tool)) return "allow";
     return "ask";
   }
   if (pathInCwd(p, cwd)) {
     if (readOnlyNames(tool)) return "allow";
-    if (mode === "acceptEdits") return "allow";
+    // P2 收窄：acceptEdits 只预授权 cwd 内 write_file/edit_file，不放行 MCP 写工具等
+    if (mode === "acceptEdits" && PATH_WRITE_TOOLS.has(tool)) return "allow";
     return "ask";
   }
   // cwd 外：只读工具也 ask（修缺口 ④）；one-shot canPrompt=false 时由 prompt 层降级 deny

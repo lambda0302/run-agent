@@ -155,14 +155,15 @@ describe("makeCheckPermission（REPL 内组装：engine + 注入 ask）", () => 
   it("ask 命中时走注入的 ask；y → allow", async () => {
     const out = { write: () => {} } as unknown as NodeJS.WritableStream;
     const cp = makeCheckPermission(ctx(), out, async () => "y");
-    expect(await cp(runBash, { command: "echo hi" })).toBe("allow");
+    // 非 R0 命令（local-exec）才走 ask 弹窗
+    expect(await cp(runBash, { command: "node --version" })).toBe("allow");
   });
 
   it("ask 被拒 → deny 且输出拒绝原因", async () => {
     const written: string[] = [];
     const out = { write: (s: string) => written.push(s) } as unknown as NodeJS.WritableStream;
     const cp = makeCheckPermission(ctx(), out, async () => "n");
-    expect(await cp(runBash, { command: "echo hi" })).toBe("deny");
+    expect(await cp(runBash, { command: "node --version" })).toBe("deny");
     expect(written.join("")).toContain("已拒绝执行 run_bash");
   });
 

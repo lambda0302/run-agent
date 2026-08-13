@@ -5,7 +5,8 @@
  * verify 工具作为本类型的工具之一，两者并存不替代。
  *
  * D3 强制只读：工具集 = repo_map/glob/grep/read_file + verify + run_bash（无 write/edit）。
- * 专门权限策略：safe bash 自动放行（不弹窗）/ 项目内写入 deny / /tmp 临时脚本放行 / 危险命令 deny。
+ * 专门权限策略：readonly/local-exec/http-get bash 自动放行（构建/测试/lint/curl 采样，不弹窗）/
+ * network·write·dangerous 与命令文本危险段 deny / 项目内写入 deny / /tmp 临时脚本放行。
  * D4 输出契约：每条 check 含 `Command run:` 证据；收尾字面量 `VERDICT: PASS|FAIL|PARTIAL`；
  * 解析器校验「PASS 但无命令证据」判拒（主 agent 据此重新委派）。
  */
@@ -14,7 +15,11 @@ import path from "node:path";
 import { homedir } from "node:os";
 import type { PermissionCheckResult } from "../../../core/execute.js";
 import type { Tool } from "../../../tools.js";
-import { classifyBashCommand, pathInCwd } from "../../../permissions/engine.js";
+import {
+  classifyBashCommand,
+  DENY_BASH_SEGMENTS_RE,
+  pathInCwd,
+} from "../../../permissions/engine.js";
 
 /** verification 工具集（无写工具；verify 内部只放行 tsc/eslint/test 检查命令）。 */
 export const VERIFICATION_TOOL_NAMES = new Set([
@@ -110,7 +115,10 @@ function isTmpPath(p: string): boolean {
 
 /**
  * verification 专门权限策略（D3）。
- * - run_bash：safe 自动放行（不弹窗）；risky/dangerous deny；写重定向项目内 deny、/tmp 放行、其余越界 deny
+ * - run_bash：命令文本危险段（.run-agent/.git/.claude）deny；classify dangerous deny；
+ *   readonly/local-exec/http-get 自动放行（构建/测试/lint + curl 采样页面，不弹窗）；
+ *   network/write（git 拉推、装依赖、rm/sudo、重定向写项目文件）deny；
+ *   写重定向项目内 deny、/tmp 放行、其余越界 deny
  * - write/edit 兜底 deny（工具集已无写工具，此为防御）
  * - 只读工具 / verify 放行；未知工具保守 deny
  */
@@ -123,15 +131,37 @@ export function makeVerificationCheckPermission(
     }
     if (tool.name === "run_bash") {
       const cmd = (input as { command?: string } | undefined)?.command ?? "";
+      // 读记忆/版本库元数据只能走工具的专属通道，不经 shell
+      if (DENY_BASH_SEGMENTS_RE.test(cmd)) {
+        return { decision: "deny", reason: "命令引用危险目录段（.run-agent/.git/.claude）" };
+      }
       const danger = classifyBashCommand(cmd);
       if (danger === "dangerous") return { decision: "deny", reason: "危险命令，engine 硬底线" };
-      if (danger === "risky") return { decision: "deny", reason: "risky 命令——verification 只跑 safe 检查命令" };
+      if (danger !== "readonly" && danger !== "local-exec" && danger !== "http-get") {
+        // write/network：允许临时目录重定向写（`echo y > $TMP/probe.sh` 临时脚本，D3），
+        // 但禁项目内/越界写与破坏性命令（rm/sudo/装依赖/网络拉取等）
+        let hasTarget = false;
+        let allTmp = true;
+        for (const t of bashWriteTargets(cmd)) {
+          hasTarget = true;
+          if (isTmpPath(t)) continue;
+          allTmp = false;
+          if (pathInCwd(t, cwd)) return { decision: "deny", reason: `禁写项目文件: ${t}` };
+          return { decision: "deny", reason: `写目标越界: ${t}` };
+        }
+        if (hasTarget && allTmp) return { decision: "allow" }; // 全部写目标在 /tmp
+        return {
+          decision: "deny",
+          reason: "非只读/检查命令（network/write）——verification 只跑 readonly/local-exec/http-get 检查命令",
+        };
+      }
+      // readonly/local-exec/http-get 检查命令：写重定向仍查（`npm test > 项目文件`、`curl -o` 等）
       for (const t of bashWriteTargets(cmd)) {
         if (isTmpPath(t)) continue; // /tmp 临时脚本放行
         if (pathInCwd(t, cwd)) return { decision: "deny", reason: `禁写项目文件: ${t}` };
         return { decision: "deny", reason: `写目标越界: ${t}` };
       }
-      return { decision: "allow" }; // safe 检查命令自动放行（构建/测试/lint 不弹窗）
+      return { decision: "allow" }; // 检查命令自动放行（构建/测试/lint/curl 采样不弹窗）
     }
     if (VERIFICATION_TOOL_NAMES.has(tool.name)) return { decision: "allow" };
     return { decision: "deny", reason: `verification 不可用工具: ${tool.name}` };

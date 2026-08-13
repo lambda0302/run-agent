@@ -2,6 +2,30 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.8.0] - 2026-08-13
+
+### Fixed
+
+- **P1 plan 模式绕过路径危险段**：plan 分支提前返回可静默放行 `.git`/`.claude`/`.run-agent` 段的只读操作——判定链收口前置单线，路径危险段与记忆豁免在 plan 分支前统一处理，plan 下同样 deny。
+- **P3 用户 deny 先于导航工具**：用户显式 deny 规则现在优先于 `mcp_connect`/`enter_plan_mode` 等导航工具的放行。
+- **P4 危险命令变体补齐**：`git -C repo push --force`（前置参数形态）、`dd of=//dev`（双斜杠）、`echo x | rm -rf /`（管道变体）纳入危险识别。
+- **P5 命令文本危险段扩到三目录段**：`run_bash` 命令引用从仅 `.run-agent` 扩到 `.git`/`.claude`/`.run-agent` 任一目录段（命令开头或 shell 拼接边界后匹配，`/i` 不区分大小写，后缀 `(?![\w-])` 防 `.gitignore`/`.gitattributes` 误伤）。
+- **verification / verify 同步六分类**：`makeVerificationCheckPermission` 按新分类放行 readonly/local-exec/http-get 检查命令（构建/测试/lint/curl 采样不弹窗）、deny 危险命令与项目内写、`/tmp` 临时脚本放行；`verify` 只放行 readonly/local-exec 检查命令。
+
+### Changed
+
+- **`run_bash` 从「一律询问」改为六分类影响半径判定**：`classifyBashCommand` 把每条命令归入 `dangerous`（无条件 deny）/ `readonly`（R0 闭集自动 allow）/ `network` / `local-exec` / `http-get` / `write`（兜底 ask），`acceptEdits` 不放行非 readonly 命令。
+- **本地执行类命令从免确认变为询问**：`node --version` / `npm test` / `python3 x.py` / `./script.sh` 等（R3a 执行任意代码，影响半径大）。
+- **git 系列不入 R0**：仓库级 `.git/config` 可定义 alias/pager/external-diff 执行任意命令，`git status`/`log`/`diff` 等一律按 `write` 兜底 ask——不赌仓库配置可信。
+- **`acceptEdits` 收窄**：只预授权 cwd 内 `write_file`/`edit_file`，不再无条件放行无路径工具（remember/verify 等）与 MCP 写工具。
+- **`curl` 采样单列 `http-get` 类**：engine 层询问；verification 子 agent 放行（页面采样）。
+
+### Added
+
+- **`readonly` R0 闭集白名单**：`pwd`/`ls`/`echo`/`cat`（无管道/重定向/命令替换/子 shell/逻辑符，`cat` 严格单参数纯相对路径）自动 allow，全模式共享。
+- **判定链收口前置单线**：`hasPermissionsToUseTool` 重排为「用户 deny → 内置危险命令 → 命令文本危险段 → 记忆豁免 → 路径危险段 → plan 分支 → 导航工具 → 用户 allow → 白名单兜底」，用户 deny 先于一切内置放行。
+- **`DENY_BASH_SEGMENTS_RE`**：命令文本危险段正则（三目录段 + `/i`），作为路径工具按段 deny 之外的第二道防线。
+
 ## [0.7.2] - 2026-08-12
 
 ### Fixed

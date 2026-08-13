@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.7.2**（多 Agent 编排 + 收尾轮/预算提示 + 权限弹窗来源标签 + agent 类型动态列出）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.8.0**（权限重构：`run_bash` 六分类影响半径 + 判定链收口前置单线）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.7.2
+run-agent --version    # 应输出 0.8.0
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
@@ -320,7 +320,7 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **记忆维护**（0.4.0）：`run-agent memory list/show/rm/prune` 子命令管理项目记忆；`glob`/`grep` 遍历默认忽略 `.run-agent`
 - **代码理解**（0.4.1）：`repo_map` 两遍排序定位符号/文件（git 索引 + 路径打分 + 符号扫描，非 git 仓库降级 readdir）· `explore` 只读探索子 agent（4/12/16 轮，上下文独立）· `verify` 对改动文件跑 tsc/eslint/test 把错误读回自修（命令白名单 + 120s 超时 + 30k 截断）
 - **超大工具结果指针化**（V3）：超阈值结果落盘、消息里只留指针，模型需要时自己 `read_file`
-- **权限审批引擎**（V2 / 0.4.2）：`default` / `acceptEdits` 两档模式（bypass 已删除）+ **Plan 模式**（0.5.0，强制只读），危险目录黑名单 + 工作目录白名单 + 记忆读专属通道三层模型，内置危险命令与敏感路径底线，支持全局 + 项目级规则
+- **权限审批引擎**（V2 / 0.4.2 / V8）：`default` / `acceptEdits` 两档模式（bypass 已删除）+ **Plan 模式**（0.5.0，强制只读），危险目录黑名单 + 工作目录白名单 + 记忆读专属通道三层模型，**`run_bash` 六分类影响半径**（readonly 自动放行 / dangerous 硬拒 / 其余询问，判定链收口前置单线），内置危险命令与敏感路径底线，支持全局 + 项目级规则
 - **Plan 模式**（0.5.0）：复杂任务先只读探索、再出计划、经你批准才动手——`enter_plan_mode` 进入强制只读（写/执行/非只读 MCP 工具一律 deny），`exit_plan_mode` 呈现计划并弹窗审批（计划落盘 `.run-agent/plans/`），批准后自动恢复执行权限；也可直接 `/plan` 手动进入
 - **MCP 接入**（0.5.0）：接入标准协议生态（stdio / HTTP / SSE），配置 `mcp.json` 后按需 `mcp_connect <server>` 连接，MCP 工具（`mcp__server__tool`）与内置工具走同一权限管线；详见 [docs/mcp.md](docs/mcp.md)
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json` / `.run-agent/mcp.json`，防提示注入
@@ -331,25 +331,26 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **自定义命令**（0.6.0）：`.md` 模板（`@file` 内联 + 参数追加，走 agent 循环）或 `.py/.js/.ts` 脚本（解释器直跑，注入 `RUN_AGENT_CWD`/`RUN_AGENT_PROMPT`），REPL `/命令名` 触发；详见 [docs/commands.md](docs/commands.md)
 - **Headless**（0.6.0）：`--print <prompt>` 跑一次即退，`--json` 输出结构化结果（stdout 纯 JSON、人类日志去 stderr、工具轨迹含权限判定与截断、退出码 0/1），`--max-turns` 限轮数——可编程调用、对接 CI / 脚本；详见 [docs/usage.md](docs/usage.md#headlessprint--json)
 - **多 Agent 编排**（0.7.0）：`agent` 工具委派子任务（前台阻塞 / 后台并行 `run_in_background`），`send_message` 补充信息、`task_stop` 止损，`--coordinator` 协调者模式拆解→并行委派→汇总核对；自定义 agent 类型（`.run-agent/agents/` frontmatter）；子 agent 权限严格继承、后台永不弹窗；详见 [docs/agents.md](docs/agents.md)
-- **verification 验证子 agent**（0.7.1）：对抗性验证专家——非平凡改动完成后委派它跑构建/测试/检查，出具带命令证据的 `VERDICT: PASS|FAIL|PARTIAL`（强制只读 + safe bash 自动放行 / 项目写 deny 的专门权限）；详见 [docs/agents.md](docs/agents.md)
+- **verification 验证子 agent**（0.7.1）：对抗性验证专家——非平凡改动完成后委派它跑构建/测试/检查，出具带命令证据的 `VERDICT: PASS|FAIL|PARTIAL`（强制只读 + 检查类 bash（readonly/local-exec/http-get）自动放行 / 项目写与 network 写 deny 的专门权限）；详见 [docs/agents.md](docs/agents.md)
 - **后台记忆提取双轨**（0.7.1）：交互 REPL 每轮结束后台提取子 agent 分析增量消息、自动沉淀跨会话记忆（游标增量 + 主/后台互斥 + 失败静默；仅 Trust 且非 `--bare`；`RUN_AGENT_DISABLE_MEMORY_EXTRACT` 可关）；详见 [docs/memory.md](docs/memory.md)
 - **多提供商**：一套抽象对接 Anthropic / OpenAI / OpenAI 兼容 / Ollama
 - **透明**：REPL 里实时看到模型文本增量与每次工具调用及结果
 - **会话持久化**：JSONL 追加、`--resume` 原样回放（支持压缩边界续接）
 
-V7 已交付 0.7.2；路线图 V7+ 待做：TUI、session 切换。权限判定待修项见 [docs/Bug_V7.md](docs/Bug_V7.md)。
+V8 已交付 0.8.0（权限重构：`run_bash` 六分类 + 判定链收口前置单线，详见 [docs/permissions.md](docs/permissions.md)）；V9 待做：TUI、session 切换。Bug_V7.md 权限待修项归 V8 桶。
 
 ## 安全模型
 
-`run-agent` 默认拦得多、放行得少：所有 shell 命令执行都需确认，写/改工具在 `default` 模式需确认，
-路径以工作目录为白名单边界（cwd 外**只读也问**），且存在不可被规则解除的安全底线（`rm -rf /`、
-`git push --force`、`.git`/`.claude`/`.run-agent` 路径段等）。**0.4.2 起无 bypass 模式**：
+`run-agent` 默认拦得多、放行得少：shell 命令按影响半径**六分类**（`readonly` 只读命令自动放行，
+`network`/`local-exec`/`http-get`/`write` 询问、`dangerous` 无条件拒绝），写/改工具在 `default`
+模式需确认，路径以工作目录为白名单边界（cwd 外**只读也问**），且存在不可被规则解除的安全底线
+（`rm -rf /`、`git push --force`、`.git`/`.claude`/`.run-agent` 路径段等）。**0.4.2 起无 bypass 模式**：
 `--dangerously-skip-permissions` 与 `--mode bypass` 已移除，旧配置里的 `"bypass"` 回退 `default` 并警告。
 交互 REPL 内按 `y/n/a` 授权（`a` 记入永久规则）；**one-shot 不弹确认，一律拒绝**。
 
 ```bash
 run-agent -t "帮我看一下这段代码"                     # -t 信任当前项目
-run-agent --mode acceptEdits "重构 src/utils.ts"      # 写/改免确认（仅 cwd 内），命令仍询问
+run-agent --mode acceptEdits "重构 src/utils.ts"      # 写/改免确认（仅 cwd 内 write_file/edit_file），命令按六分类
 run-agent trust --list                                # 查看受信任项目
 ```
 

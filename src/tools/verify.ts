@@ -43,12 +43,15 @@ const schema = z.object({
 const ALLOWED_TOOL_WORD = /\b(tsc|eslint|vitest|jest|mocha|ava|test)\b/i;
 
 /**
- * 命令模板白名单：引用已知检查工具，且不触发危险/风险分级（rm、sudo、curl|sh、git push --force 等）。
+ * 命令模板白名单：引用已知检查工具，且分类属于 readonly/local-exec（ls/cat/npm test/npx tsc/
+ * npx eslint 等检查命令）——写、网络、危险命令（rm、curl|sh、git push --force、git clone 等）一律拒绝。
+ * verify 跑的是解释器派生的检查命令，故以 local-exec 为界，而非网络/写命令。
  * 拒绝任意用户命令——verify 只能跑 tsc/eslint/test 派生命令。
  */
 export function isAllowedCommand(cmd: string): boolean {
   if (!cmd.trim()) return false;
-  if (classifyBashCommand(cmd) !== "safe") return false;
+  const danger = classifyBashCommand(cmd);
+  if (danger !== "readonly" && danger !== "local-exec") return false;
   return ALLOWED_TOOL_WORD.test(cmd);
 }
 

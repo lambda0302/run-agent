@@ -12,7 +12,7 @@ V7 引入子 agent 编排：主 agent 用 **`agent` 工具**把任务委派给 s
 | ----------------- | --------------------------------------------------------------------------------- |
 | `general-purpose` | 通用 worker：继承父级全部工具（**不含** `agent`/`send_message`/`task_stop`，防递归失控） |
 | `explore`         | 只读探索：仅 `repo_map`/`glob`/`grep`/`read_file`，`maxIterations=12`（0.4.1 迁移，0.7.2 上调） |
-| `verification`    | （0.7.1）证据式验证专家：只读 + `run_bash`（safe 自动放行 / 项目写 deny / `/tmp` 放行），出具带命令证据的 `VERDICT: PASS|FAIL|PARTIAL`，`maxIterations=12` |
+| `verification`    | （0.7.1）证据式验证专家：只读 + `run_bash`（readonly/local-exec/http-get 自动放行 / 项目写与 network 写 deny / `/tmp` 临时脚本放行），出具带命令证据的 `VERDICT: PASS|FAIL|PARTIAL`，`maxIterations=12` |
 
 **三件套只装配主 agent**：`agent`/`send_message`/`task_stop` 三个协调原语不会出现在子 agent 的
 工具池里——worker 无协调权，模型无法无限递归派发子 agent（`CORE_TEAM_TOOLS`）。
