@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { grepTool } from "../../src/tools/grep.js";
+import { globToRegExp, grepTool } from "../../src/tools/grep.js";
 
 let dirs: string[] = [];
 
@@ -96,5 +96,16 @@ describe("grep 工具", () => {
       glob: "**/*.ts",
     });
     expect(r.result).toContain("const hello = 1");
+  });
+
+  it("globToRegExp 跨平台锁定：POSIX 绝对路径不匹配 **/*.ts（单文件+glob 误报根因）", () => {
+    const g = globToRegExp("**/*.ts");
+    // POSIX 绝对路径以 / 开头 → (?:[^/]+/)* 无法从字符串开头起配 → 不匹配（Linux/macOS 挂）
+    expect(g.test("/tmp/x/sub/b.ts")).toBe(false);
+    // glob 过滤实际用的是相对搜索根路径（文件名 / 相对路径）→ 应匹配
+    expect(g.test("b.ts")).toBe(true);
+    expect(g.test("sub/b.ts")).toBe(true);
+    // Windows 盘符路径以字母开头恰好匹配——旧实现为何只在 POSIX 挂
+    expect(g.test("C:/x/sub/b.ts")).toBe(true);
   });
 });

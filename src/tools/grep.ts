@@ -20,8 +20,8 @@ const schema = z.object({
   ignore: z.array(z.string()).optional().describe("Extra directory names to skip"),
 });
 
-/** 把 glob 转成正则（单遍扫描，避免链式 replace 互相污染）。 */
-function globToRegExp(pattern: string): RegExp {
+/** 把 glob 转成正则（单遍扫描，避免链式 replace 互相污染）。导出供单测锁定跨平台行为。 */
+export function globToRegExp(pattern: string): RegExp {
   let re = "";
   const chars = pattern.replace(/\\/g, "/").split("");
   for (let i = 0; i < chars.length; i++) {
@@ -101,11 +101,18 @@ export const grepTool: Tool = {
     for (const file of files) {
       if (hits.length >= MAX_RESULTS) break;
       // 显示用相对路径：单文件 = 用户传入的 path（模型按传入路径定位，如 src/cli/repl.ts:141）；
-      // 目录 = 相对搜索根。glob 过滤与命中输出用同一 rel。
+      // 目录 = 相对搜索根。
       const rel = isSingleFile
         ? (dir ?? path.basename(root)).replace(/\\/g, "/")
         : path.relative(root, file).split(path.sep).join("/");
-      if (globRe && !globRe.test(rel)) continue;
+      // glob 过滤用「相对搜索根」路径，绝不能喂绝对路径：POSIX 绝对路径以 / 开头，
+      // `**/*.ts` 这类 glob（^(?:[^/]+/)*…）匹配不上 → 单文件 + glob 在 Linux/macOS 误报未找到
+      // （Windows 盘符路径以字母开头侥幸通过）。目录分支本就相对搜索根，行为不变；
+      // 单文件分支 relative(root,file) 得空串 → 用文件名（等价于「按父目录搜索时该文件的相对路径」）。
+      const globRel = isSingleFile
+        ? path.basename(file)
+        : path.relative(root, file).split(path.sep).join("/");
+      if (globRe && !globRe.test(globRel)) continue;
       let content: string;
       try {
         const buf = await readFile(file);
