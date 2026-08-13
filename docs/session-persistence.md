@@ -236,7 +236,8 @@
 ## 4. 尚未落地的改进建议（按性价比，状态已更新）
 
 > V3 已把旧 P2#8（compact）做完，且超出原建议（哨兵边界 + 文件重挂 + 反应式压缩 + 硬截断兜底）。
-> 其余建议现状未变。
+> **V8（2026-08-13）已拍板落地：P0 全部（①cwd 分目录 + ②0o600）+ P1 部分（元数据记录、按 id 指定 resume；
+> 不做 uuid/parentUuid 图），P2 其余不做**——见 §5 完整设计。
 
 ### P0 · 立刻做（几行改动，高回报）—— 未做
 
@@ -263,7 +264,77 @@
 
 ---
 
-## 5. 参考资料
+## 5. V8 会话持久化 + 会话切换落地设计（2026-08-13 讨论拍板）
+
+> 状态：**方案已定，未实现**。本节记录 V8 系统能力完善中「消息持久化 + 会话切换」的完整设计。
+> 用户拍板要点：会话切换（看历史 + 自主选择切入）**从 V9 桶挪到 V8**；列表预览用**首条 prompt 截断**（A 方案）；
+> 交互选择走 **promptSelect 方向键菜单**（路径 A，落地 select-ui-plan.md 基建）。V9 不再含会话切换条目。
+
+### 5.1 范围与归属
+
+| 项 | 归属 | 说明 |
+| ---- | ----- | ---- |
+| 按 cwd 分目录 + 权限收紧 | **V8** | 修跨项目串会话 bug，存储层可靠性 |
+| 首行元数据记录 | **V8** | resume 可知 model/provider，列表数据源 |
+| `--list` + `--resume <id>` | **V8** | 看历史 + 指定切入（CLI 最简版） |
+| promptSelect 基建（keypress/select） | **V8** | 会话选择方向键菜单的依赖，顺带升级权限/Trust 确认 |
+| REPL `/sessions` 交互切换 | **V8** | 类似 CC `/resume` |
+| AI 生成标题（B 方案） | V9 | 需额外 LLM 调用，成本翻倍 |
+| uuid/parentUuid 图 | **不做** | run-agent 恢复不需要对链做手术 |
+| 批量写 / 渐进读（P2 其余） | **不做** | 会话体量远未到 GB 级 |
+| `/clear` 指针机制 | V8 后 | 现有「只清内存不清盘」保持文档注明；与 V9 会话管理一起做 |
+
+### 5.2 存储层改造（`src/utils/sessionStorage.ts`）
+
+**① 按 cwd 分目录**（P0#1）
+- `sessionsDir(cwd)`：`~/.local/share/run-agent/sessions/<sanitized-cwd>/`，`sanitizePath` 复用 CC 思路
+  （`sessionStoragePortable.ts:293-319`）：非字母数字 → `-`，超长路径截断 200 字符 + hash 后缀保唯一。
+- 调用点：`src/cli/index.ts:343/349`（`latestSessionFile`/`createSessionFile`）传 cwd；`transcriptDir`
+  （`index.ts:406`）与 `resultsDir`（`compact.ts:47-58`）跟随新会话目录，子 agent transcript / `r<N>.txt`
+  落盘结果同目录不变。
+- **旧文件不迁移**：旧文件未存 cwd、无从对应；留在 `sessions/` 平铺根作为历史遗留，新会话走新目录。
+
+**② 首行元数据记录**（P1#5 简化版）
+- 会话第 1 行 `{ ts, meta: { cwd, model, provider, version } }`，第 2 行起为 `{ ts, message }` 消息行
+  （`SessionRecord` 加可选 `meta`；`createSessionFile` 建文件即写首行；`loadSession` 遇 `meta` 行跳过）。
+- resume 时可读上次 model/provider；`--list` 只读第 1 行即得列表元数据。
+
+**③ 权限收紧**（P0#2）：`ensureDir` 的 `mkdir` 用 `{ mode: 0o700 }`，`appendFile` 用 `{ mode: 0o600 }`
+（Node 的 mode 只对新文件生效，既有文件不变，天然满足）。
+
+### 5.3 会话列表 + 切换
+
+**④ `--list`**：readdir 当前 cwd 的会话目录，每文件**只读前 2 行**（渐进式，几十个会话几十次小读）：
+```
+<id>  <model>  <时间>  <首条 prompt 截断 60 字符>
+```
+预览 = 第 2 行首条用户 prompt 截断；排序按文件名字典序倒序（时间戳在文件名里，天然时间序）。
+
+**⑤ `--resume <id>`**：按 id 定位会话文件（`sessions/<cwd>/<id>.jsonl`）→ `loadSession` 切入，
+替代现有 `latestSessionFile`「只续最新」。id 取文件名 `<ts>-<id>` 全串（唯一、可复制）。
+
+**⑥ REPL `/sessions`**：列出当前项目会话 → `promptSelect` 方向键菜单选择 → 切入 =
+加载目标会话替换当前 `messages` + 更新 `sessionFile` 指针（后续 `appendMessage` 写新会话）。
+
+### 5.4 promptSelect 基建（select-ui-plan.md 落地）
+
+- `src/ui/keypress.ts`：`parseKeypress` 纯函数（ANSI 序列 → `KeyEvent`：up/down/enter/escape/char），
+  可单测；同 CC 注册表思想提供 `isPreviousKey/isNextKey/isAcceptKey/isCancelKey` 判词。
+- `src/ui/select.ts`：`promptSelect<T>(options, { rl })` 通用方向键菜单——`rl.pause()` → raw mode →
+  收集 → 恢复 `rl.resume()`；焦点移动做成纯函数 `nextFocus`（越界回绕、跳过 disabled）。
+  **stdin 唯一所有权是铁律**（select-ui-plan §2.4）：`rl` 由 REPL 注入，全程单一读者。
+- 接入：`resolveAsk`（权限确认 `[y/n/a]` → 三项菜单）+ `askTrustProject`（两项菜单）+ `/sessions`。
+
+### 5.5 依赖顺序与验证
+
+实现顺序：**存储层(①②③) → 列表(④⑤) → promptSelect(⑦⑧) → /sessions(⑥ + 接入)**。
+
+验证：`keypress/select` 纯函数单测 + 会话列表（readdir + 首行）单测 + `--resume <id>` 回归 +
+CLI 冒烟 + CI 三 OS × Node 20/22/24 全绿；select-ui-plan §4 验收条目沿用。
+
+---
+
+## 6. 参考资料
 
 - run-agent 侧（当前实现）：
   - `src/utils/sessionStorage.ts`（存储/读/写）
