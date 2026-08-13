@@ -12,6 +12,7 @@
 - **P5 命令文本危险段扩到三目录段**：`run_bash` 命令引用从仅 `.run-agent` 扩到 `.git`/`.claude`/`.run-agent` 任一目录段（命令开头或 shell 拼接边界后匹配，`/i` 不区分大小写，后缀 `(?![\w-])` 防 `.gitignore`/`.gitattributes` 误伤）。
 - **verification / verify 同步六分类**：`makeVerificationCheckPermission` 按新分类放行 readonly/local-exec/http-get 检查命令（构建/测试/lint/curl 采样不弹窗）、deny 危险命令与项目内写、`/tmp` 临时脚本放行；`verify` 只放行 readonly/local-exec 检查命令。
 - **grep 单文件 + glob 在 POSIX 绝对路径误报未找到**（0.7 引入、跨平台遗留）：单文件搜索的 glob 过滤原用用户传入的绝对路径匹配 `**/*.ts`（正则 `^(?:[^/]+/)*…` 无法从开头的 `/` 起配），Linux/macOS 误报「未找到匹配」、Windows 盘符路径以字母开头侥幸通过（CI 6 job 挂、Windows 3 job 过）。修复：单文件分支的 glob 改用文件名判定（等价于「按父目录搜索时该文件的相对路径」）；`globToRegExp` 导出 + 回归测试锁定「POSIX 绝对路径不匹配 / 相对与文件名匹配」行为。
+- **`--resume` 误选子 agent transcript 作主会话**（V7-14，0.7.2 后修复、随 0.8.0 发布）：`subagent-*.jsonl` 与主会话同目录，`latestSessionFile` 只按 `.jsonl` 过滤，倒序字典序下字母开头的 `subagent-*` 恒排时间戳文件名（数字开头）之前（`'s'>'2'`，与时间先后无关）→ 确定性误选、`--resume` 静默续错内容。修复：过滤 `SUBAGENT_FILE_PREFIX` 前缀（sessionStorage.ts 定义、registry.ts 复用统一常量）。
 
 ### Changed
 

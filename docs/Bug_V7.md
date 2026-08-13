@@ -217,4 +217,4 @@ npx tsx -e '…'   # import hasPermissionsToUseTool / classifyBashCommand
 2. **V7-P4 + V7-P5**：补正则（`/i` + `git -C`/`of=//dev` 变体）。
 3. **V7-P2 + V7-P6**：确认语义 / 评估纵深后决定（可能「不改」也成立）。
 
-> 附注：CHANGELOG [0.7.2] Fixed 段的 V7-1/2/3/4/5 曾漏记（只记了收尾轮 / --max-turns / 粘贴滞留 3 条），已于 0.8.0 发布时回填；V7-14 为 0.7.2 之后发现修复、未随版本发布。
+> 附注：CHANGELOG [0.7.2] Fixed 段的 V7-1/2/3/4/5 曾漏记（只记了收尾轮 / --max-turns / 粘贴滞留 3 条），已于 0.8.0 发布时回填；V7-14 为 0.7.2 之后发现修复、随 0.8.0 发布（CHANGELOG [0.8.0] Fixed 已记）。
