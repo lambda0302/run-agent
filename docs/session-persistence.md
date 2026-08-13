@@ -1,61 +1,135 @@
-# 会话持久化：run-agent V1 现状 vs Claude Code 方案
+# 会话持久化：run-agent 当前实现 vs Claude Code 方案
 
-> 目的：记录 run-agent V1 会话持久化的实现与评估，并以 Claude Code 的真实实现（源码级核实）为参照，
-> 给出 V3 及以后的改进建议。
+> 目的：记录 run-agent 会话持久化的当前实现（对照 V1 时代的旧评估逐项更新），并以 Claude Code 的真实实现
+> （源码级核实）为参照，给出尚未落地的改进建议。
 >
-> 核实来源：`F:\CC_Source\claude-code-sourcemap\`（@anthropic-ai/claude-code 2.1.88 的 npm sourcemap 还原源码，
+> **版本说明**：本文初稿写于 V1，评估「消息数组持久化」的现状并给出 V3 及以后的建议。此后 V3 实现了
+> `added` 契约 + compact（哨兵边界）、V7 新增子 agent 独立 transcript，实现方式已有实质变化。本版重写
+> §1/§3/§4 为**当前实现（0.7.2）**；§2（Claude Code 研究）与结论不受版本影响，基本保留原文。
+>
+> 核实来源：run-agent 侧以当前 `src/` 为准（文件行号即当前代码）；Claude Code 侧为
+> `F:\CC_Source\claude-code-sourcemap\`（@anthropic-ai/claude-code 2.1.88 的 npm sourcemap 还原源码，
 > 非官方、仅供研究），并交叉核对本机 `~/.claude/projects/` 下真实 transcript（CLI 2.1.227）。
-> run-agent 侧代码以当前 `src/` 为准。
 
 ---
 
 ## 0. 一句话结论
 
-- **run-agent V1 = 消息数组的持久化**：写入是序列化消息数组的增量，读取是拼回数组。69 行、零依赖、够用。
+- **run-agent = 消息数组的 append-only 日志 + 哨兵边界**：写入是逐条追加 `LLMMessage`，读取是拼回数组、
+  遇到压缩边界从摘要续起。核心文件 `src/utils/sessionStorage.ts`（82 行，零依赖）。
+- **V3 之后的三项实质演进**：① 持久化契约从 `result.messages.slice(before)` 改为 **`added` 契约 + 数组替换**，
+  为 compact 重建数组铺路；② **compact 已内联实现**——不重写文件，向同一 JSONL 追加一条带哨兵的边界消息，
+  resume 从最后一个边界续起（对应旧建议 P2#8，已超出原预期）；③ **V7 子 agent 独立 transcript**——与主会话
+  同目录、同格式的 `<sessionDir>/subagent-<id>.jsonl`。
 - **Claude Code = 持久化日志里的图**：每行一个带 `uuid`/`parentUuid` 的 Entry 节点，读取按链重建、按语义剪枝。
-  因此它能支撑 compact、snip、rewind、fork、子代理 sidechain、Edit 回滚——这些都是"对图做变换"。
-- **给 run-agent 的实践建议（按性价比）**：① 立刻做——会话按 cwd 分目录 + 文件 `0o600`；② 下一版做——
-  引入 `uuid`/`parentUuid` 字段 + `last-prompt` 指针；③ 长期再考虑——批量写队列、渐进式读取。
+  它支撑 compact、snip、rewind、fork、子代理 sidechain、Edit 回滚——都是「对图做变换」。
+- **尚未落地的建议（现状未变）**：① 会话按 cwd 分目录 + 文件 `0o600`（旧 P0）；② `uuid`/`parentUuid` 字段 +
+  `last-prompt` 指针（旧 P1）；③ 批量写队列、渐进式读取（旧 P2，除 compact 外均未做）。
 
 ---
 
-## 1. run-agent V1 现状
+## 1. run-agent 当前实现
 
-### 1.1 实现
+### 1.1 存储位置与文件格式
 
-核心文件：`src/utils/sessionStorage.ts`（69 行，自 v0.1.0 起未变，V2 未改动此层）。
+核心文件：`src/utils/sessionStorage.ts`（82 行，自 V1 的 69 行演进，主要是加了 compact 边界重置）。
 
-| 要素     | 实现                                                                         |
-| -------- | ---------------------------------------------------------------------------- |
-| 存储位置 | `~/.local/share/run-agent/sessions/`（基于 `homedir()`）                     |
-| 文件命名 | `<ISO时间戳去冒号点>-<6位随机base36>.jsonl`                                  |
-| 单行格式 | `{ ts, message: LLMMessage }`，逐行 `appendFile` 追加                        |
-| 读取     | `loadSession()` 逐行 `JSON.parse` 重建消息数组，坏行 `try/catch` 跳过        |
-| resume   | `latestSessionFile()` 按文件名字典序倒序取最新 → `loadSession` 回放 messages |
+| 要素     | 实现                                                                             |
+| -------- | -------------------------------------------------------------------------------- |
+| 存储位置 | `~/.local/share/run-agent/sessions/`（基于 `homedir()`）                         |
+| 目录结构 | **全局平铺**，无 cwd 子目录（旧建议 P0#1 未落地）                                |
+| 文件命名 | `<ISO时间戳去冒号点>-<6位随机base36>.jsonl`，如 `2026-08-10T22-59-00.000Z-abc123.jsonl` |
+| 单行格式 | `{ ts, message: LLMMessage }`，逐行 `appendFile` 追加，`ts` 是写入时刻的独立时间戳 |
+| 读取     | `loadSession()` 逐行 `JSON.parse` 重建数组，坏行 `try/catch` 跳过                 |
+| resume   | `latestSessionFile()` 按文件名字典序倒序取最新 → `loadSession` 回放               |
 
-写入时机（`src/cli/repl.ts`）：用户 prompt 先追加一行，`runQuery` 跑完后把本轮新增消息 `result.messages.slice(before)` 逐条追加。
+对应代码：`sessionsDir()`（`sessionStorage.ts:8`）、`SessionRecord`（`:13-16`）、`createSessionFile`
+（`:24-29`）、`appendMessage`（`:32-35`）。
 
-### 1.2 评估
+### 1.2 写路径：`added` 契约（V3 核心变更）
 
-**做对的：**
+旧文档写的是 `result.messages.slice(before)`——V3 起废弃。现在：
 
-- **持久化内部统一格式 `LLMMessage`**（含 `tool_use`/`tool_result` block），resume 回放零格式转换、无损，切 provider 也续得上——这是整套方案最聪明的一笔。
-- **append-only 日志模型**：追加 O(1)、抗崩溃、无需锁/事务，适配 agent loop 连续写多条的模式。
-- **时间戳进文件名**：让"找最新会话"退化成一次字典序排序，零 IO 成本，顺带解决 Windows 路径合法性。
-- **坏行容错**：单行损坏不拖垮整个 resume。
+- `runQuery` 内部所有消息统一经 `pushConversation` 入队，**同时**推进 `messages` 与 `added` 两个数组
+  （`src/core/query.ts:140-144`）。
+- REPL 每轮（`runTurn`，`src/cli/repl.ts:405-442`）与 one-shot（`runOneShot`，`repl.ts:257-297`）的持久化顺序一致：
+  1. **先把用户 prompt 追加一行**（`repl.ts:406-407` / `repl.ts:263-264`）；
+  2. 跑完后 `for (const m of result.added) await appendMessage(...)`（`repl.ts:433-435` / `repl.ts:290-292`）；
+  3. **`messages = result.messages`** 整体替换（`repl.ts:432`）——compact 可能重建数组，`slice` 已不可靠。
+- **compact 边界消息、`pollExternal` 注入的外部消息也都走 `added`**（`query.ts:180`、`query.ts:154`），
+  因此它们同样会被持久化。
+- headless 也复用 `runOneShot`，同一持久化路径（`src/cli/index.ts:495,523`），会话文件名进 headless JSON 输出
+  的 `session` 字段（`index.ts:531`）。
 
-**短板（按严重程度）：**
+### 1.3 读路径：`--resume`
 
-| 短板                    | 后果                                                                              |
-| ----------------------- | --------------------------------------------------------------------------------- |
-| `/clear` 只清内存不清盘 | 清空后 `--resume` 旧历史原样回来，清空语义被打破                                  |
-| 无会话元数据            | 没存模型/provider/项目路径/版本/token 用量；resume 沿用旧上下文却不知道当初的配置 |
-| 无 compact/摘要         | 长会话全量重放，token 线性膨胀，迟早撞 `maxTokens`                                |
-| 坏行"吞错"而非告警      | 跳过一行 `tool_result` 可能让后续 `tool_use` 回放对不上，静默失败                 |
-| `--resume` 只能续最新   | 不能指定历史会话，会话文件的唯一 id 未暴露                                        |
-| 全局平铺、跨项目串会话  | 两个项目的会话混在一个目录，`--resume` 只认全局最新                               |
-| 字典序==时间序假设脆弱  | 依赖文件名等长且前缀不变，结构一改就静默出错                                      |
-| 无并发保护              | 两进程同时 resume 同一文件会交错追加                                              |
+- `--resume` → `latestSessionFile()` 取最新会话 → `loadSession(f)` 回放（`src/cli/index.ts:342-347`）。
+- `latestSessionFile`：readdir 过滤 `.jsonl`，按文件名**逆字典序**取第一个——ISO 时间戳去冒号点后字典序即时间序
+  （`sessionStorage.ts:67-81`）。
+- `loadSession`：逐行 parse，遇到内容含压缩哨兵 `\u0000RUN_AGENT_COMPACT_BOUNDARY\u0000` 的消息时
+  **重置加载点**为 `messages = [该边界消息]`（最后一个哨兵赢）；损坏行跳过，resume 不因单行坏数据失败
+  （`sessionStorage.ts:41-64`）。
+
+### 1.4 compact 与持久化的协同（V3）
+
+- **JSONL 保持纯追加**，compact 不重写文件——旧历史留在文件里，加载时被边界重置忽略，实现「resume 从摘要续起」。
+- 边界消息 = `[上下文已压缩] <哨兵> + 对话摘要 + 已重新挂载文件块`（`src/core/compact.ts:101-111`，
+  哨兵定义 `compact.ts:16`；重挂来自 `collectReadFiles` 捞 read_file 历史、最多 5 个文件）。
+- **自动压缩**：`runQuery` 每轮循环顶估算超阈值即 `maybeAutoCompact`，边界消息进 `added` 被持久化
+  （`query.ts:165-183`）。
+- **手动 `/compact`**：`messages = res.messages` + 仅持久化边界消息（`repl.ts:565-590`）。
+- **反应式压缩**：`prompt_too_long` 时强制压缩；仍超长则 `hardTruncateToFit` 反复丢最老消息 +
+  `normalizeToolPairing` 修孤儿 tool 配对（`compact.ts:187-225`）——都在内存完成，不额外落盘。
+
+### 1.5 子 agent 独立 transcript（V7 新增）
+
+- `transcriptDir` = `path.dirname(sessionFile)`，与主会话**同目录**（`index.ts:406-407`）。
+- 后台任务：每个任务一个 `<transcriptDir>/subagent-<id>.jsonl`（如 `subagent-task-1.jsonl`，
+  `src/services/agents/team/registry.ts:88-91`）。
+- 写入：`runAgent` 先 append 用户 prompt，再逐条 append `result.added`（`src/core/run_agent.ts:55-86`），
+  **格式与主会话相同**的 JSONL。独立文件与主会话命名不冲突。
+
+### 1.6 目录复用
+
+`resultsDir` 同样指向 `path.dirname(sessionFile)`——超大工具结果落盘为 `<sessionDir>/r<N>.txt`
+（决策 8，`compact.ts:47-58`）。因此会话目录最终混存三类文件：主会话 jsonl + 子 agent transcript jsonl +
+落盘结果 txt。落盘路径为绝对路径，resume 后仍有效。
+
+### 1.7 `/clear` 语义
+
+`/clear` 只 `messages.length = 0` **清内存，不落盘**（`repl.ts:561-564`）。清空后若 `--resume`，
+仍会读到文件里的旧历史——旧文档已注明此行为，现状未变。
+
+### 1.8 评估（V1 短板 → 当前状态）
+
+**V1 起就做对的（现状仍是优点）：**
+
+- **持久化内部统一格式 `LLMMessage`**（含 `tool_use`/`tool_result` block），resume 回放零格式转换、无损，
+  切 provider 也续得上。
+- **append-only 日志模型**：追加 O(1)、抗崩溃、无需锁/事务。
+- **时间戳进文件名**：找最新会话退化成一次字典序排序，零 IO 成本。
+- **坏行容错**：单行损坏不拖垮 resume。
+
+**V1 短板 → 当前状态：**
+
+| 短板                    | 当前状态                                                                   |
+| ----------------------- | -------------------------------------------------------------------------- |
+| `/clear` 只清内存不清盘 | **未变**——清空后 `--resume` 旧历史原样回来（已知、文档注明，沿用现状）      |
+| 无会话元数据            | **未变**——没存 model/provider/项目路径/版本/token 用量                     |
+| 无 compact/摘要         | **已解决**——哨兵边界 + 摘要 + 文件重挂，自动/手动/反应式三路，resume 从摘要续起 |
+| 坏行「吞错」而非告警    | **未变**——跳过一行 `tool_result` 仍可能让后续 `tool_use` 回放对不上（静默） |
+| `--resume` 只能续最新   | **未变**——不能指定历史会话，会话文件的唯一 id 未暴露                       |
+| 全局平铺、跨项目串会话  | **未变**——两个项目的会话混在一个目录，`--resume` 只认全局最新               |
+| 字典序==时间序假设脆弱  | **未变**——依赖文件名等长且前缀不变                                        |
+| 无并发保护              | **未变**——两进程同时 resume 同一文件会交错追加                             |
+
+**V1 之后新增的短板（新引入的复杂度）：**
+
+| 短板                              | 后果                                                                       |
+| --------------------------------- | -------------------------------------------------------------------------- |
+| 边界重置依赖哨兵字符串            | 若摘要里混入同字面量会误重置；哨兵含 `\u0000`，正常内容不会碰撞，风险可控   |
+| 会话目录混存三类文件              | **曾实证出 bug、已修复**：`latestSessionFile` 只按 `.jsonl` 过滤时，`subagent-*.jsonl`（字母开头，char code 恒大于数字）倒序字典序下**永远**排在时间戳主会话前 → `--resume` 会误选子 agent transcript。已修：`latestSessionFile` 过滤 `subagent-` 前缀（常量 `SUBAGENT_FILE_PREFIX`，registry.ts 复用同一前缀命名，防两处漂移）+ 2 条回归测试 |
+| 落盘结果 txt 与会话同生命周期      | 无清理策略，长会话会累积 `r<N>.txt` 文件                                    |
 
 ---
 
@@ -141,51 +215,64 @@
 
 ## 3. 逐项对比
 
-| 维度        | run-agent V1          | Claude Code                                                      |
-| ----------- | --------------------- | ---------------------------------------------------------------- |
-| 目录结构    | 全局平铺 `sessions/`  | `projects/<sanitized-cwd>/`，按项目隔离                          |
-| 文件名      | `<时间戳>-<id>.jsonl` | `<uuid>.jsonl`（uuid==sessionId）                                |
-| 行粒度      | 一条 LLMMessage       | 一个 Entry 记录（assistant 回合多行 + 控制记录）                 |
-| 消息身份    | 无                    | 每条 `uuid` + `parentUuid` 链                                    |
-| 每行元数据  | 无                    | `sessionId/cwd/version/gitBranch/slug/model/usage…` 全量         |
-| 找最新/续接 | 文件名字典序          | `last-prompt.leafUuid` 指针 + mtime                              |
-| 写路径      | 逐条 `appendFile`     | 100ms 批量队列 + `0o600` + 退出 flush + 元数据重写               |
-| 读路径      | 整文件逐行            | 64KB 头尾渐进 + 1MB 流式加载                                     |
-| compact     | 无（排到 V3）         | 内联 boundary + summary，append-only 不截断                      |
-| 恢复范围    | 消息数组              | 完整 AppState（agent/model/worktree/文件历史/attribution/todos） |
-| 坏数据      | 坏行跳过（吞错）      | 按 uuid 去重 + 链手术（relink/snip）                             |
-| 模型        | 消息日志              | 状态存储（图）                                                   |
+| 维度        | run-agent（当前 0.7.2）                                           | Claude Code                                                      |
+| ----------- | ----------------------------------------------------------------- | ---------------------------------------------------------------- |
+| 目录结构    | 全局平铺 `sessions/`（无 cwd 隔离）                               | `projects/<sanitized-cwd>/`，按项目隔离                          |
+| 文件名      | `<时间戳>-<id>.jsonl`                                             | `<uuid>.jsonl`（uuid==sessionId）                                |
+| 行粒度      | 一条 LLMMessage                                                   | 一个 Entry 记录（assistant 回合多行 + 控制记录）                 |
+| 消息身份    | 无                                                                | 每条 `uuid` + `parentUuid` 链                                    |
+| 每行元数据  | 仅 `ts`                                                           | `sessionId/cwd/version/gitBranch/slug/model/usage…` 全量         |
+| 找最新/续接 | 文件名字典序                                                      | `last-prompt.leafUuid` 指针 + mtime                              |
+| 写路径      | 逐条 `appendFile`（用户 prompt 先写 + `result.added`）            | 100ms 批量队列 + `0o600` + 退出 flush + 元数据重写               |
+| 读路径      | 整文件逐行 + 哨兵边界重置                                         | 64KB 头尾渐进 + 1MB 流式加载                                     |
+| compact     | 内联哨兵边界 + 摘要 + 文件重挂（自动/手动/反应式）                | 内联 compact_boundary + summary，append-only 不截断              |
+| 子代理      | 独立 `subagent-<id>.jsonl` 与主会话同目录，同格式                  | `<session-uuid>/subagents/agent-<id>.jsonl` + .meta.json         |
+| 恢复范围    | 消息数组（从最后边界续起）                                        | 完整 AppState（agent/model/worktree/文件历史/attribution/todos） |
+| 坏数据      | 坏行跳过 + 边界重置                                               | 按 uuid 去重 + 链手术（relink/snip）                             |
+| 模型        | 消息日志（append-only，无图变换）                                 | 状态存储（图）                                                   |
 
 ---
 
-## 4. V3+ 改进建议（按性价比）
+## 4. 尚未落地的改进建议（按性价比，状态已更新）
 
-### P0 · 立刻做（几行改动，高回报）
+> V3 已把旧 P2#8（compact）做完，且超出原建议（哨兵边界 + 文件重挂 + 反应式压缩 + 硬截断兜底）。
+> 其余建议现状未变。
+
+### P0 · 立刻做（几行改动，高回报）—— 未做
 
 1. **会话按 cwd 分目录**：`~/.local/share/run-agent/sessions/<sanitized-cwd>/<id>.jsonl`，
-   复用 Claude Code 的 `sanitizePath` 思路（非字母数字 → `-`，超 200 字符加 hash）。直接消除跨项目续错会话。
+   复用 Claude Code 的 `sanitizePath` 思路。直接消除跨项目续错会话。
 2. **文件权限 `0o600`**（`mkdir` 目录 `0o700`）：会话含明文 prompt 与文件内容，默认权限应收紧。
 
-### P1 · 下一版做（为 /clear 与 compact 铺路）
+### P1 · 下一版做（为 /clear 与更精细恢复铺路）—— 未做
 
-3. **引入 `uuid` + `parentUuid` 字段**：先不建完整链重建，只给消息加身份，让 compact 有挂靠点。
-4. **加 `last-prompt` 指针记录**：把"找最新"从文件名排序改成显式指针，同时给 `/clear` 正确定义空间
+3. **引入 `uuid` + `parentUuid` 字段**：先不建完整链重建，只给消息加身份。子 agent transcript 与主会话混目录的
+   `--resume` 误选 bug 已用前缀过滤止血（见 §1.8）；类型标记是更稳健的长期解，可显式区分主会话与子 transcript。
+4. **加 `last-prompt` 指针记录**：把「找最新」从文件名排序改成显式指针，同时给 `/clear` 正确定义空间
    （清内存 + 更新指针，而非让 resume 回放全量）。
 5. **落一条元数据记录**（`model`/`provider`/`usage`）：resume 时能知道上次的配置与成本。
 
-### P2 · 长期（性能工程，出现长会话卡顿再上）
+### P2 · 长期（性能工程，出现长会话卡顿再上）—— compact 已做，其余未做
 
 6. **批量写队列**：100ms 合并 + 退出时 `flush()`，避免逐条 fsync。
 7. **渐进式读取**：resume 列表只读头尾 64KB；加载用流式分块；设 `MAX_TRANSCRIPT_READ_BYTES` 防 OOM。
-8. **compact**：内联 `compact_boundary` + `isCompactSummary` 摘要，append-only 不截断。
+8. ~~**compact**~~ ✅ 已做（V3）：内联哨兵边界 + 摘要 + 文件重挂，append-only 不截断；另含反应式压缩 +
+   硬截断 + 孤儿 tool 修复兜底。
 
-> 不建议 P2 现在就做：这些是为"单文件多个 GB + 几十万条消息"做的工程，run-agent 69 行零依赖还远未到这一步。
+> 与初稿一致的判断：P2 其余条目是为「单文件多个 GB + 几十万条消息」做的工程，run-agent 82 行零依赖还远未到这一步。
 
 ---
 
 ## 5. 参考资料
 
-- run-agent 侧：`src/utils/sessionStorage.ts`、`src/cli/repl.ts`、`src/cli/index.ts`（v0.1.0 起未变）
+- run-agent 侧（当前实现）：
+  - `src/utils/sessionStorage.ts`（存储/读/写）
+  - `src/cli/repl.ts`（`runOneShot`/`runTurn` 的 added 持久化、`/clear`、`/compact`）
+  - `src/cli/index.ts`（会话创建/续接、`resultsDir`/`transcriptDir` 指向）
+  - `src/core/query.ts`（`pushConversation`、compact 边界与 pollExternal 走 added）
+  - `src/core/compact.ts`（哨兵、边界消息、文件重挂、落盘指针、硬截断/孤儿修复）
+  - `src/core/run_agent.ts`（子 agent transcript 写入）
+  - `src/services/agents/team/registry.ts`（`subagent-<id>.jsonl` 命名）
 - Claude Code 源码（研究用途，2.1.88）：`F:\CC_Source\claude-code-sourcemap\restored-src\src\utils\sessionStorage.ts`
   `sessionStoragePortable.ts` `sessionRestore.ts`，以及 `services/compact/`、`utils/listSessionsImpl.ts`
 - 官方文档：Claude Code `.claude` 目录说明（code.claude.com/docs/en/claude-directory）

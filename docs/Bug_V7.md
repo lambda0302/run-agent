@@ -2,7 +2,7 @@
 
 > 阶段：2026-08-12 ｜ 交付：`0.7.0`（多 Agent 基建 + 协调者三件套）+ `0.7.1`（verification + 后台记忆提取）+ `0.7.2`（异常修复批 + 预算提示 + 来源标签 + 动态类型列出，480 用例）。
 > 来源：会话记录、git 提交 `d28b254` / `f96202b` / `56ece71`、用户真实模型实测（3 次反馈子 agent 空结论）+ 真实模型 QA 审查 + Claude Code 独立实证复核。
-> **V7 共记录 13 个已解决 bug + 6 个待修权限发现 + 1 个已知未修。** 全部集中在「权限判定 / 子 agent 编排 / REPL 交互」三条线。
+> **V7 共记录 14 个已解决 bug + 6 个待修权限发现 + 1 个已知未修。** 全部集中在「权限判定 / 子 agent 编排 / REPL 交互」三条线。
 
 ## 总览
 
@@ -21,6 +21,7 @@
 | V7-11  | `PermissionCheckResult` 联合类型直接 `.decision` → TS2339                               | 工程/TS      | 🟢 低  | ✅ 已解决     |
 | V7-12  | `buildExtractPrompt` 单条超限用 break → 超长首条丢弃后续全部                             | 记忆提取     | 🟢 低  | ✅ 已解决     |
 | V7-13  | 测试 FakeClient 未浅拷贝 `[...messages]` → 请求数组被后续污染                            | 测试         | 🟢 低  | ✅ 已解决     |
+| V7-14  | `--resume` 误选子 agent transcript 作主会话（目录混存 + 倒序字典序恒排前）                | 编排/存储    | 🟠 高  | ✅ 已解决     |
 | V7-P1  | plan 分支在危险目录段检查前早退 → plan 下可读 `.git`/`.run-agent` 非 memory 内容          | 权限判定     | 🟠 高  | ⏳ 待修（优先） |
 | V7-P2  | acceptEdits 放行一切无路径工具（`!p` → allow），含 remember/MCP 无 path 工具              | 权限判定     | 🟡 中  | 🤔 待确认语义 |
 | V7-P3  | 导航工具（enter/exit_plan_mode、mcp_connect）先于用户 deny → deny 规则失效                | 权限判定     | 🟠 高  | ⏳ 待修（优先） |
@@ -115,6 +116,14 @@
 - **现象**：`runQuery` 无 system 时 `requestMessages` 与内部 `messages` 同引用，`pushConversation` 污染已记录数组 → 测试断言错乱。
 - **修复**：测试 FakeClient 必须浅拷贝 `[...messages]`。
 
+### V7-14（高）`--resume` 误选子 agent transcript 作主会话（0.7.2 之后发现并修复）
+
+- **现象**：协调者会话 spawn 过后台子 agent 后 `--resume`，静默回放的是子 agent 的 transcript 而非主会话（不报错，只是续错内容）。
+- **根因**：`subagent-<id>.jsonl`（V7 决策 C4，`registry.ts:90`）与主会话**同目录**；`latestSessionFile` 只按 `.jsonl` 过滤（`sessionStorage.ts:75`），倒序字典序下 `subagent-*`（字母开头）**恒排**在时间戳文件名（数字开头）之前——`'s'(115) > '2'(50)`，与时间先后无关。
+- **实证**：node 直跑排序，`subagent-task-2.jsonl` 恒排在 `2026-08-13T10-…jsonl` 前。⚠️ 最初按「时间序通常更早、冲突概率低」下的保守判断**是错的**，实测确认是**确定性 bug**——教训：字符串排序推演必须实跑。
+- **修复**（`src/utils/sessionStorage.ts`）：`latestSessionFile` 过滤 `SUBAGENT_FILE_PREFIX = "subagent-"` 前缀；`registry.ts` 改用同一常量命名（收敛两处魔法字符串，防漂移）。`tests/utils/sessionStorage.test.ts` +2 用例（子 transcript 存在时仍选主会话；只有子 transcript 时返回 undefined）。全量 482 用例绿。
+- **影响面**：只在会话目录混入子 transcript 时触发（即 spawn 过后台子 agent 的会话）。未随版本发布，待 0.7.3。
+
 ---
 
 ## 二、待修/待确认（真实模型 QA 权限发现）
@@ -208,4 +217,4 @@ npx tsx -e '…'   # import hasPermissionsToUseTool / classifyBashCommand
 2. **V7-P4 + V7-P5**：补正则（`/i` + `git -C`/`of=//dev` 变体）。
 3. **V7-P2 + V7-P6**：确认语义 / 评估纵深后决定（可能「不改」也成立）。
 
-> 附注：CHANGELOG [0.7.2] Fixed 段只记了 3 条（收尾轮 / --max-turns / 粘贴滞留），本文件的 V7-1/2/3/4/5 已在 commit `56ece71` 里但 CHANGELOG 漏记——如后续出 0.7.3 可一并回填。
+> 附注：CHANGELOG [0.7.2] Fixed 段只记了 3 条（收尾轮 / --max-turns / 粘贴滞留），本文件的 V7-1/2/3/4/5 已在 commit `56ece71` 里但 CHANGELOG 漏记；V7-14 为 0.7.2 之后发现修复、未随版本发布——如后续出 0.7.3 可一并回填。

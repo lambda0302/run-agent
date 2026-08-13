@@ -15,6 +15,9 @@ export interface SessionRecord {
   message: LLMMessage;
 }
 
+/** 子 agent transcript 文件前缀（V7 决策 C4：与主会话同目录、独立文件）。 */
+export const SUBAGENT_FILE_PREFIX = "subagent-";
+
 async function ensureDir(dir: string): Promise<string> {
   await mkdir(dir, { recursive: true });
   return dir;
@@ -72,7 +75,9 @@ export async function latestSessionFile(dir: string = sessionsDir()): Promise<st
   } catch {
     return undefined;
   }
-  const jsonl = files.filter((f) => f.endsWith(".jsonl"));
+  // 排除子 agent transcript（subagent-*.jsonl 以字母开头，倒序字典序恒排在时间戳主会话之前，
+  // 不排除会误选成主会话续接——见 docs/session-persistence.md §1.8）
+  const jsonl = files.filter((f) => f.endsWith(".jsonl") && !f.startsWith(SUBAGENT_FILE_PREFIX));
   if (jsonl.length === 0) return undefined;
 
   // 文件名形如 2026-08-10T22-59-00.000Z-abc123.jsonl，ISO 时间戳的字典序即时间顺序

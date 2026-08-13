@@ -53,6 +53,23 @@ describe("sessionStorage（JSONL 会话）", () => {
     expect(await latestSessionFile(dir)).toBeUndefined();
   });
 
+  it("latestSessionFile 排除子 agent transcript（subagent- 前缀，V7 目录混存）", async () => {
+    const dir = tempDir();
+    // 子 agent transcript 以字母开头，倒序字典序恒排在时间戳主会话前（bug：不排除会误选）
+    const sub = path.join(dir, "subagent-task-1.jsonl");
+    await appendFile(sub, "{}\n", "utf8");
+    const main = await createSessionFile(dir);
+    await appendMessage(main, { role: "user", content: "a" });
+    expect(await latestSessionFile(dir)).toBe(main);
+  });
+
+  it("目录里只有子 agent transcript 时 latestSessionFile 返回 undefined", async () => {
+    const dir = tempDir();
+    const sub = path.join(dir, "subagent-task-1.jsonl");
+    await appendFile(sub, "{}\n", "utf8");
+    expect(await latestSessionFile(dir)).toBeUndefined();
+  });
+
   it("损坏的行在加载时被跳过", async () => {
     const dir = tempDir();
     const file = await createSessionFile(dir);

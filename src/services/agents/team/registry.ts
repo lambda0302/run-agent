@@ -10,6 +10,7 @@ import type { LLMClient, LLMMessage } from "../../../providers/types.js";
 import type { PermissionCheckResult } from "../../../core/execute.js";
 import { decisionOf } from "../../../core/execute.js";
 import { runAgent } from "../../../core/run_agent.js";
+import { SUBAGENT_FILE_PREFIX } from "../../../utils/sessionStorage.js";
 import type { Tool } from "../../../tools.js";
 import path from "node:path";
 
@@ -85,9 +86,9 @@ export class BackgroundTaskManager {
           return decisionOf(r) === "ask" ? { decision: "deny" } : r;
         }
       : undefined;
-    // V7 决策 C4：独立 transcript（与主会话同目录、命名不冲突）
+    // V7 决策 C4：独立 transcript（与主会话同目录、命名不冲突；前缀常量与 latestSessionFile 过滤共用）
     const transcriptFile = opts.transcriptDir
-      ? path.join(opts.transcriptDir, `subagent-${id}.jsonl`)
+      ? path.join(opts.transcriptDir, `${SUBAGENT_FILE_PREFIX}${id}.jsonl`)
       : undefined;
     try {
       const result = await runAgent({
