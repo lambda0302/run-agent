@@ -4,7 +4,8 @@ V2 引入**权限审批引擎**、**只读并行/写串行**、**Trust 信任边
 把权限模型收敛为「危险目录黑名单 + 工作目录白名单 + 专属通道」三层。本版**重构 `run_bash` 语义**：
 从「一律问」改为**六分类影响半径判定**（`dangerous` 硬拒 / `readonly` 自动放行 / 其余询问），判定链
 **收口前置单线**（用户 deny 最先、命令文本危险段在 plan 分支前，见下）。设计细节见
-[Plan_V2.md](Plan_V2.md)、[Plan_V4.5.md](Plan_V4.5.md)、[expected-permissions.md](expected-permissions.md) 与 [../SECURITY.md](../SECURITY.md)。
+[Plan_V2.md](Plan_V2.md)、[Plan_V4.5.md](Plan_V4.5.md)、[expected-permissions.md](expected-permissions.md)（**归档设计稿**，
+0.8.0 已落地，未落地的远期方向见其顶部）与 [../SECURITY.md](../SECURITY.md)。
 
 ## 权限模式
 
