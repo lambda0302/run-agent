@@ -31,6 +31,11 @@
 
 ### Fixed
 
+- **协调者三件套 / explore 子 agent 首调被拒「未获授权」**（V7-1，发布时漏记回填）：engine 兜底误用硬编码只读集、未用装配层注入的扩展 `readOnlyNames` → `--coordinator` 并行 explore 首调必 ask。修复：权限判定闭包单一来源，改用 `readOnlyNames`。
+- **REPL 多行粘贴逐 line 触发并发 runTurn**（V7-2，发布时漏记回填）：多行粘贴被拆成逐 line 事件每行触发一次并发 `runTurn`，弹窗答案被残留污染。修复：行收集 300ms 防抖 + 串行队列 + ask 弹窗前冲刷残留。
+- **grep 单文件路径永远「未找到匹配」**（V7-3，发布时漏记回填）：`path` 指向单个文件时 `readdir` 抛错被静默吞掉 → 取证证据链断裂。修复：`stat` 分流单文件直接搜、显示路径用用户传入 path。
+- **子 agent 空 completion 静默空结论**（V7-4，发布时漏记回填）：`end_turn` 无文本无工具 → 空结论被当成功。修复：有界重试（`MAX_EMPTY_RETRIES=2`）+ 明确失败语义双保险。
+- **后台收集接线缺失**（V7-5，发布时漏记回填）：`onBackgroundDone` 未传 `runQuery` → 协调者委派后只说「等待返回」就闭嘴、结果无人收集。修复：REPL 与 headless 双入口接线。
 - **子 agent 空结论/半截结论**：`runQuery` 迭代上限撞顶时只返回「末轮工具调用前的文本片段」——explore 子 agent 常把全部轮数花在取证上、从没进入「给结论」阶段。修复：预算耗尽且末轮仍调工具（`tool_use`/`max_tokens`/`error`）→ 注入「请给出最终结论」指令 + **无工具**再流一轮（有界，只多一轮），`reply` 即为收尾轮结论；空 completion 重试耗尽后同样做一次收尾轮。收尾轮内再遇截断/出错/空响应直接有界返回，绝不无限循环。`explore` 迭代预算上调：medium 8→12、very thorough 12→16。
 - **`--max-turns` 契约微调**：headless 撞顶且模型仍在调工具时多跑一轮纯文本收尾（`turns` 含该轮），保证 `reply` 是结论而非半截话。
 - **两行粘贴末行滞留成下一条"待输入"**：末行无换行收尾的粘贴，readline 只发 `n-1` 个完整 line 事件，旧 drain 门槛 `inputBuf.length>=2` 不触发 → 末行滞留在 readline 缓冲，出现在下一条 `run-agent>` 提示符上变成待输入（用户没按回车也显示、甚至被误提交）。修复：line 事件后用 `setImmediate` 查 readline 内部残留（Node ≤22 的 `_line` / Node 24 的 `Symbol(_line_buffer)`，版本容错 helper），同 chunk 有残留则标记 `pasteTailPending`，flush 时并入本 prompt。「提交后新输入」是独立 chunk、事件时刻残留为空 → 不并入（不误收）。
