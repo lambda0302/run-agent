@@ -283,11 +283,14 @@ run-agent --provider ollama --model qwen2.5 "介绍一下这个项目"
 ### 续接会话
 
 ```bash
-run-agent --resume          # 续接最近一次会话（进入 REPL）
+run-agent --list            # 列出当前项目会话（id / 模型 / 时间 / 首条 prompt 预览）
+run-agent --resume          # 续接当前项目最近一次会话（进入 REPL）
+run-agent --resume <id>     # 按 id 切入指定历史会话
 run-agent --resume "继续"   # 在最近会话上下文上执行
 ```
 
-会话以 JSONL 逐行追加在 `~/.local/share/run-agent/sessions/`。
+会话按启动目录隔离，以 JSONL 逐行追加在 `~/.local/share/run-agent/sessions/<sanitized-cwd>/`
+（首行存元数据：cwd/model/provider/version）。REPL 内 `/sessions` 方向键菜单可切换会话。
 
 ### 接入 MCP server（0.5.0）
 
@@ -335,7 +338,8 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **后台记忆提取双轨**（0.7.1）：交互 REPL 每轮结束后台提取子 agent 分析增量消息、自动沉淀跨会话记忆（游标增量 + 主/后台互斥 + 失败静默；仅 Trust 且非 `--bare`；`RUN_AGENT_DISABLE_MEMORY_EXTRACT` 可关）；详见 [docs/memory.md](docs/memory.md)
 - **多提供商**：一套抽象对接 Anthropic / OpenAI / OpenAI 兼容 / Ollama
 - **透明**：REPL 里实时看到模型文本增量与每次工具调用及结果
-- **会话持久化**：JSONL 追加、`--resume` 原样回放（支持压缩边界续接）
+- **会话持久化**（0.8.1）：按项目分目录的 JSONL 追加、首行元数据、`--list` / `--resume <id>` / REPL `/sessions`
+  切换（支持压缩边界续接、方向键菜单选择）
 
 V8 已交付 0.8.0（权限重构：`run_bash` 六分类 + 判定链收口前置单线，详见 [docs/permissions.md](docs/permissions.md)）；V9 待做：TUI、session 切换。Bug_V7.md 权限待修项归 V8 桶。
 
@@ -364,6 +368,7 @@ run-agent trust --list                                # 查看受信任项目
 - [MCP 接入](docs/mcp.md)
 - [Hooks](docs/hooks.md) · [Skills](docs/skills.md) · [自定义命令](docs/commands.md)
 - [记忆与上下文管理](docs/context-management.md)
+- [消息持久化系统](docs/message-persistence.md) · [会话持久化 vs Claude Code](docs/session-persistence.md)
 - [本地开发](docs/development.md)
 - [用法](docs/usage.md)
 - [路线图](docs/Plan.md) · [V0 交付](docs/Plan_V0.md) · [V1 实施方案](docs/Plan_V1.md) · [V2 实施方案](docs/Plan_V2.md) · [V3 实施方案](docs/Plan_V3.md) · [V4 实施方案](docs/Plan_V4.md)

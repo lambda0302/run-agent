@@ -16,7 +16,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **统一内部消息格式 `LLMMessage` 是全项目唯一真相**（对齐 Anthropic `tool_use`/`tool_result` block）。OpenAI 的 `tool_calls`/`tool` role 互转只发生在适配器层，loop 层只见统一格式。改消息格式必须同步 4 个适配器。流式是唯一形态；OpenAI 流式把 tool_calls 按 chunk 分片，适配器按 `index` 跨 chunk 聚合。
 - **工具即函数**：`Tool = { name, description, inputSchema: z.ZodType, call, isConcurrencySafe? }`。zod schema 经手写 `zodToJsonSchema`（零依赖）转 JSON Schema。**写类工具必须显式 `isConcurrencySafe: false`**（read/glob/grep 显式 `true`）；`src/core/execute.ts` 的 `StreamingToolExecutor` 据此调度——tool_use block 一完整即入队执行（流式边执行），只读并行（上限 10）/ 写串行且不打断，结果**按 index 重排**回填。
-- **权限管线**：判定是纯函数 `hasPermissionsToUseTool`（`src/permissions/engine.ts`，**收口前置单线**：用户 deny → 内置危险命令 → 命令文本危险段 → 记忆读专属通道 → 路径危险段 → plan 分支 → 导航工具 → 用户 allow → 白名单兜底；**无 bypass 模式**）。`run_bash` 经 `classifyBashCommand` 按影响半径分**六类**（`BashDanger`：dangerous 硬拒 / readonly R0 闭集自动 allow / network·local-exec·http-get·write 兜底 ask）；命令文本危险段 `DENY_BASH_SEGMENTS_RE` 收口 `.git`/`.claude`/`.run-agent` 三目录段。`ask` 的弹窗由 `src/permissions/prompt.ts` 的 `resolveAsk` 处理；`checkPermission` 在 `src/cli/repl.ts` 的 `makeCheckPermission(ctx, out, ask)` 组装。**铁律：stdin 只能有一个读者**——权限弹窗复用 REPL 的 readline（注入 `ask`），绝不在同一 stdin 上另建 readline（会导致输入回显成多个字符）。
+- **权限管线**：判定是纯函数 `hasPermissionsToUseTool`（`src/permissions/engine.ts`，**收口前置单线**：用户 deny → 内置危险命令 → 命令文本危险段 → 记忆读专属通道 → 路径危险段 → plan 分支 → 导航工具 → 用户 allow → 白名单兜底；**无 bypass 模式**）。`run_bash` 经 `classifyBashCommand` 按影响半径分**六类**（`BashDanger`：dangerous 硬拒 / readonly R0 闭集自动 allow / network·local-exec·http-get·write 兜底 ask）；命令文本危险段 `DENY_BASH_SEGMENTS_RE` 收口 `.git`/`.claude`/`.run-agent` 三目录段。`ask` 的弹窗由 `src/permissions/prompt.ts` 的 `resolveAsk` 处理（0.8.1 起为方向键菜单 `promptSelect`）；`checkPermission` 在 `src/cli/repl.ts` 的 `makeCheckPermission(ctx, out, ask)` 组装。**铁律：stdin 只能有一个读者**——权限弹窗复用 REPL 的 readline（注入 `ask`），绝不在同一 stdin 上另建 readline（会导致输入回显成多个字符）；`promptSelect`（`src/ui/select.ts`）进入时 `rl.pause()` + 临时移除 line 监听（readline 完全静音）、结束恢复，`input` 缺省回退 `rl.input`（显式 `input` 优先）。
 - **Plan 模式（0.5.0）**：`PermissionMode` 含 `"plan"`（**会话内动态模式**，非 CLI 可选项——`--mode plan` 报非法值）。plan 分支在判定顺序最前：写/执行类工具一律 deny、只读 cwd 内放行 / cwd 外 ask、`enter_plan_mode` 放行、`exit_plan_mode` 放行（审批在 REPL 弹窗）；`exit_plan_mode` 把计划直写 `.run-agent/plans/` 并恢复进入前模式。**one-shot 不装配 plan 工具、无 `/plan`**（无审批弹窗，防死锁）。
 - **MCP 客户端（0.5.0）**：`src/services/mcp/`（config / manager / tool / mcp_connect）。配置用户级 + Trust 项目级 `mcp.json`；**按需连接**（`mcp_connect` 免确认、plan 下 deny）；MCP 工具名 `mcp__server__tool`、desc 截断 2048、懒 schema、`isConcurrencySafe = readOnlyHint`，走同一权限管线（`readOnlyNames` 第 7 参并入 readOnlyHint 名）。工具池是函数型（`() => Tool[]`，每轮重建）——`mcp_connect` 注册的工具**下一轮请求**起可调用。详见 `docs/mcp.md` / `docs/plan-mode.md`。
 - **可编程化（0.6.0，一律 run-agent 自有路径、无 `.claude/`）**：
@@ -29,7 +29,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - **Headless**（`src/cli/index.ts` `runHeadless`）：`--print <prompt>` + `--json` → stdout 纯 JSON（人类日志去 stderr），契约 `{version,provider,model,session,reply,messages,turns,tools[],errors}`，`tools[].result` 记录时截断 2000 字符，退出码 0/1。**headless 收尾必须 `process.exitCode` + 自然退出**（`process.exit()` 在 Windows 触发 libuv 断言，见 `docs/Bug_V6.md`）。
 - **配置优先级**：CLI flag > 环境变量（`RUN_AGENT_*`）> `~/.config/run-agent/config.json` > 默认值。`apiKeyEnv` 字段存的是**环境变量名**、不是 key 值；`resolveApiKey()` 解析：显式 `apiKey` > `apiKeyEnv` 指向的变量 > provider 默认约定（如 `ANTHROPIC_API_KEY`）。
 - **Bash 工具跨平台**：`resolveShell()` 在 win32 用 `powershell.exe -NoProfile -NonInteractive`，POSIX 用 `/bin/bash -lc`；`RUN_AGENT_SHELL` 可覆盖。默认 120s 超时 + 输出 30k 截断。
-- **会话持久化**：`~/.local/share/run-agent/sessions/<ts>-<id>.jsonl`，逐行 JSONL 追加。`--resume` 读最新会话回放 messages。
+- **会话持久化（0.8.1）**：`~/.local/share/run-agent/sessions/<sanitized-cwd>/<ts>-<id>.jsonl`，按 cwd 分目录
+  （`sanitizePath` 非字母数字 → `-`、超长截断 200 + hash）；新建会话首行写 `{ ts, meta: {cwd, model, provider, version} }`
+  元数据，第 2 行起才是消息行；目录 `0o700` / 文件 `0o600`。`--list`（当前项目会话列表，预览 = 首条 prompt 截断 60）、
+  `--resume [id]`（无 id 续当前项目最新，带 id 按 `sessionsDir` + `findSessionFile` 定位）、REPL `/sessions`
+  （promptSelect 方向键菜单切入 = 加载历史替换 messages + 更新 sessionFile 指针）。`loadSession` 跳过 meta 行、
+  按 compact 哨兵重置加载点。
 
 ## 非显而易见的约束（踩过的坑）
 

@@ -31,7 +31,8 @@ run-agent
 | `-m, --model <m>`    | 模型名，如 `claude-sonnet-5`、`deepseek-chat`、`gpt-4o-mini`                      |
 | `-b, --base-url <u>` | API 端点（`openai-compatible` 必填；Ollama 默认指向 `http://localhost:11434/v1`） |
 | `-k, --api-key <k>`  | 显式 API key（优先级最高）                                                        |
-| `-r, --resume`       | 续接最近一次会话                                                                  |
+| `-r, --resume [id]`  | 0.8.1：续接**当前项目**最近一次会话；带 id 按 id 定位历史会话（`run-agent --resume <id>`） |
+| `-l, --list`         | 0.8.1：列出当前项目会话（`id  模型  时间  首条 prompt 预览`；时间列显示**本地时区**，存储仍 UTC） |
 | `--print <p>`        | headless：跑完这条 prompt 一次就退出（与位置参数 prompt 互斥）                    |
 | `--json`             | headless 结构化输出：stdout 只出 JSON，人类日志去 stderr（需 `--print`）          |
 | `--max-turns <n>`    | headless 的 ReAct 循环轮数上限（默认 25）；撞顶仍在调工具时多跑一轮纯文本收尾（0.7.2） |
@@ -98,16 +99,22 @@ run-agent> /help
 - `/plan`：进入只读计划模式 · `/mcp`：查看/连接 MCP server
 - `/skills`：列出技能 · `/commands`：列出自定义命令（`/技能名`、`/命令名` 直接触发）
 - `/tasks`（0.7.0，仅协调者/交互 REPL 后台任务）：列出运行中的后台子 agent（task_id / 类型 / 状态 / prompt 摘要）
+- `/sessions`（0.8.1）：方向键菜单列出当前项目会话，Enter 切入、Esc 取消
 - `/help`：帮助 · `/exit` / `/quit`：退出
 
 ## 会话与续接
 
-每次运行都会把内部消息逐行追加到 `~/.local/share/run-agent/sessions/<ts>-<id>.jsonl`。
+会话按**启动目录**隔离（0.8.1）：`~/.local/share/run-agent/sessions/<sanitized-cwd>/<ts>-<id>.jsonl`，
+逐行 JSONL 追加，首行存元数据（cwd/model/provider/version）。
 
 ```bash
-run-agent --resume            # 续接最近会话进入 REPL
+run-agent --list               # 列出当前项目会话（id / 模型 / 时间 / 首条 prompt 预览）
+run-agent --resume             # 续接当前项目最近会话进入 REPL
+run-agent --resume <id>        # 按 id 切入指定历史会话（id 见 --list 输出）
 run-agent --resume "继续"      # 在最近会话上下文中追加一条 prompt
 ```
+
+REPL 内 `/sessions`：方向键菜单列出当前项目会话，Enter 切入、Esc 取消。
 
 ## Headless（`--print` + `--json`）
 

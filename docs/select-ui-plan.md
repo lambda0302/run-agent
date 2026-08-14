@@ -1,6 +1,9 @@
 # 方向键 + Enter 选择菜单 · 调研与实施方案
 
-> 状态：**调研完成，方案待批准，未实现**（对应任务 #31）
+> 状态：**已实现（0.8.1，2026-08-13）**。本调研方案按**路径 A** 落地为 `src/ui/keypress.ts` + `src/ui/select.ts`
+> （`parseKeypress` / `nextFocus` / `promptSelect`），并接入权限确认（`resolveAsk` 三项菜单）、Trust 确认
+> （`askTrustProject` 两项菜单）与 REPL `/sessions` 会话选择菜单。实现细节见 `docs/session-persistence.md`
+> §1.9 / §5.4；本文其余为调研与设计，保留作背景。
 > 目标：把「输入 y/n/a」的权限/Trust 确认，升级成 Claude Code 式的「上下键切换 + Enter 确认」菜单。
 
 ---

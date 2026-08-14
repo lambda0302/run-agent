@@ -278,27 +278,17 @@ V9 发布与生态 ←─ V8 系统能力完善 ←─ V7 多Agent ←─ V6 可
 
 ### V8 —— 系统能力完善（权限重构后正式启动）
 
-> **状态（2026-08-13）：0.8.0 已发布。** 原 V8「发布与生态」整体顺延为 V9，V8 号专做**系统能力完善**——
-> 权限加固、可靠性、真实模型验证、性能稳定性等工程强化，后续此类条目一律归本桶。本次权限重构
-> （`docs/expected-permissions.md` 实现）即 V8 首个交付，已随 **0.8.0** 发布（`docs/permissions.md`、
-> SECURITY.md、CLAUDE.md、README、CHANGELOG 已同步）。
-
-- **权限重构（`expected-permissions.md`，已实现）**：`run_bash` 从「一律问」改为**六分类影响半径判定**
-  （`BashDanger`：`dangerous` 硬拒 / `readonly` R0 闭集自动 allow / `network`·`local-exec`·`http-get`·`write`
-  兜底 ask）；判定链**收口前置单线**（用户 deny → 内置危险命令 → 命令文本危险段 → 记忆豁免 → 路径危险段
-  → plan 分支 → 导航工具 → 用户 allow → 白名单兜底）；P1 堵 plan 绕过、P2 acceptEdits 只预授权
-  `write_file`/`edit_file`、P3 用户 deny 最前、P4 危险命令变体（`git -C` 强推 / `dd of=//dev` / 管道 rm）、
-  P5 三目录段命令文本收口（`.git`/`.claude`/`.run-agent`）；同步 verification / verify 的 classify 语义。
-  测试 530 用例 + typecheck + lint 全绿；`docs/permissions.md`、CLAUDE.md 已同步。
-- **V7 权限遗留（`docs/Bug_V7.md` 待修，P1/P3 优先）**：修完并入 V8。
-- **真实模型手动验证（需 key）**：六分类下 REPL 实际弹窗行为、verification 放行/拒绝、R0 自动放行、
-  plan 下危险段 deny。
-- **后续系统能力完善桶**：权限 / 可靠性 / Bug 修复 / 性能稳定性等工程强化条目在此积累。
+> **状态（2026-08-13）：0.8.0 已发布，0.8.1（会话持久化 + 会话切换）已实现待发。** 原 V8「发布与生态」整体
+> 顺延为 V9，V8 号专做**系统能力完善**——权限加固、可靠性、真实模型验证、性能稳定性等工程强化，后续此类
+> 条目一律归本桶。权限重构（`docs/expected-permissions.md` 实现）即 V8 首个交付，已随 **0.8.0** 发布
+> （`docs/permissions.md`、SECURITY.md、CLAUDE.md、README、CHANGELOG 已同步）。
+>
+> **详情见 `docs/Plan_V8.md`**（本段是外指针；已交付条目、待修项、子 Agent 权限统一分析等详情均归档在该文件）。
 
 ### V9 —— 发布与生态（持续）
 
 > **状态（2026-08-13）：顺延。** 原 V8「发布与生态」整体顺延为 V9，V8 号让给系统能力完善（权限重构）。
-> 会话切换 / select UI（V2.5 推迟项）归本桶。
+> 会话切换（V2.5 推迟项）已提前到 V8 完成（0.8.1）；select UI 基建（promptSelect）已随会话切换落地，TUI 打磨归本桶。
 
 **目标**：从"能用"到"好用、有社区、有第三方信任"。
 

@@ -35,7 +35,15 @@ import { SkillRegistry } from "../services/skills/skill_tool.js";
 import { loadCommands, CommandRegistry } from "../services/commands/loader.js";
 import { ExtractMemoriesEngine } from "../services/extract/extract.js";
 import { RunAgentError } from "../utils/errors.js";
-import { createSessionFile, latestSessionFile, loadSession } from "../utils/sessionStorage.js";
+import {
+  createSessionFile,
+  findSessionFile,
+  latestSessionFile,
+  listSessions,
+  loadSession,
+  sessionIdTime,
+  sessionsDir,
+} from "../utils/sessionStorage.js";
 import { runOneShot, runRepl } from "./repl.js";
 import type { AgentOptions } from "./repl.js";
 import type { PermissionBridge } from "../core/run_agent.js";
@@ -64,7 +72,11 @@ program
     "base URL (required for openai-compatible, e.g. https://api.deepseek.com/v1)",
   )
   .option("-k, --api-key <apiKey>", "API key (overrides env var / config file)")
-  .option("-r, --resume", "resume the latest session instead of starting a new one")
+  .option(
+    "-r, --resume [id]",
+    "resume the latest session for the current project (or the session with the given id)",
+  )
+  .option("-l, --list", "V8: list sessions for the current project")
   .addOption(
     new Option(
       "-M, --mode <mode>",
@@ -175,7 +187,8 @@ interface CliOpts {
   model?: string;
   baseUrl?: string;
   apiKey?: string;
-  resume?: boolean;
+  resume?: boolean | string;
+  list?: boolean;
   mode?: string;
   trust?: boolean;
   bare?: boolean;
@@ -202,6 +215,22 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     throw new RunAgentError("--print <prompt> 与位置参数 prompt 互斥，请二选一");
   }
   loadDotEnv(); // 项目根 .env（已存在的环境变量优先，不覆盖）
+
+  // V8 ④：--list 只列当前项目会话，无需配置 / API key（放在 loadConfig 之前）
+  if (opts.list) {
+    const list = await listSessions(sessionsDir(process.cwd()));
+    if (list.length === 0) {
+      process.stdout.write("（当前项目还没有会话，运行 run-agent 开始首个会话）\n");
+      return;
+    }
+    for (const s of list) {
+      const model = s.meta?.model ?? "-";
+      const ts = sessionIdTime(s.id); // UTC 存储 → 本地时区显示（地区自适应）
+      process.stdout.write(`  ${s.id}  ${model}  ${ts}  ${s.preview ?? ""}\n`);
+    }
+    return;
+  }
+
   const cfg = loadConfig({
     ...(opts.provider ? { provider: opts.provider as ProviderName } : {}),
     ...(opts.model ? { model: opts.model } : {}),
@@ -336,17 +365,33 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     return d === "ask" ? "deny" : d;
   };
 
-  // ── 会话：--resume 读最新会话，否则新建 ─────────────────────────
+  // ── 会话：--resume [id] 读会话（无 id 续最新），否则新建 ─────────
+  // V8 ①：按 cwd 分目录（sessionsDir(cwd)）；②：新建会话首行写入元数据（model/provider/version）
+  const sessionRoot = sessionsDir(cwd);
   let sessionFile: string;
   let initialMessages: LLMMessage[] = [];
   if (opts.resume) {
-    const f = await latestSessionFile();
-    if (!f) throw new RunAgentError("没有可续接的会话");
-    sessionFile = f;
-    initialMessages = await loadSession(f);
-    process.stderr.write(`✓ 已续接会话 ${sessionFile}\n`);
+    if (typeof opts.resume === "string") {
+      // V8 ⑤：按 id 定位会话文件（--resume <id>，id 为文件名 <ts>-<id>）
+      const f = await findSessionFile(sessionRoot, opts.resume);
+      if (!f) throw new RunAgentError(`找不到会话 ${opts.resume}（当前项目下）`);
+      sessionFile = f;
+      initialMessages = await loadSession(f);
+      process.stderr.write(`✓ 已切入会话 ${opts.resume}\n`);
+    } else {
+      const f = await latestSessionFile(sessionRoot);
+      if (!f) throw new RunAgentError("没有可续接的会话");
+      sessionFile = f;
+      initialMessages = await loadSession(f);
+      process.stderr.write(`✓ 已续接会话 ${sessionFile}\n`);
+    }
   } else {
-    sessionFile = await createSessionFile();
+    sessionFile = await createSessionFile(sessionRoot, {
+      cwd,
+      model: resolveModelName(cfg.provider, cfg.model),
+      provider: cfg.provider,
+      version: pkg.version,
+    });
     process.stderr.write(`✓ 会话 ${sessionFile}\n`);
   }
 

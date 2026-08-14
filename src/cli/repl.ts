@@ -24,7 +24,14 @@ import { readSkillBody } from "../services/skills/loader.js";
 import type { SkillRegistry } from "../services/skills/skill_tool.js";
 import type { CommandRegistry } from "../services/commands/loader.js";
 import { expandPromptTemplate, execLocalCommand } from "../services/commands/exec.js";
-import { appendMessage } from "../utils/sessionStorage.js";
+import {
+  appendMessage,
+  listSessions,
+  loadSession,
+  sessionIdTime,
+  sessionsDir,
+} from "../utils/sessionStorage.js";
+import { promptSelect } from "../ui/select.js";
 
 // 定位 readline 内部"已从流里读出、还没触发行事件"的残留（无换行收尾的末行）。
 // Node 20/22 是 `_line` 字符串字段；Node 24 起改 `Symbol(_line_buffer)`。公共 getter
@@ -298,7 +305,7 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<Ru
 
 const HELP = [
   "run-agent REPL — 直接输入 prompt 开始，agent 会读/写/改/搜/执行并汇报。",
-  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入只读计划模式 · /mcp 查看/连接 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /tasks 查看后台子 agent · /help 帮助 · /exit 退出",
+  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入只读计划模式 · /mcp 查看/连接 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /tasks 查看后台子 agent · /sessions 查看/切入历史会话 · /help 帮助 · /exit 退出",
 ].join("\n");
 
 /** V6 决策 B3/C2：内置斜杠命令集合——技能/自定义命令与内置冲突时内置优先。 */
@@ -312,6 +319,7 @@ const BUILTIN_SLASH = new Set([
   "mcp",
   "skills",
   "commands",
+  "sessions",
   "tasks",
 ]);
 
@@ -342,22 +350,27 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
   let drainingTail = false; // flush 时 rl.write("\n") 冲出的无换行残留并入本 prompt
   let pasteTailPending = false; // 本 prompt 同 chunk 里有无换行残留末行（粘贴末行，见 line handler）
   let discardNextLine = false; // ask 弹窗前冲掉的残留直接丢弃
-  let asking = false; // 弹窗进行中：flush 的冲残留不得写入，防污染 rl.question 答案
-  const ask = (q: string) => {
+  let asking = false; // 弹窗进行中：flush 的冲残留不得写入，防污染菜单输入
+  const ask = async (q: string): Promise<string> => {
     gate.begin();
     asking = true;
-    // 冲掉 readline 缓冲里无换行残留（用户输入过但未提交的部分），防止它被 rl.question
-    // 当成答案读走——粘贴异常复现时权限弹窗答案被污染成非 y 的根因
+    // 冲掉 readline 缓冲里无换行残留（用户输入过但未提交的部分），防止它被菜单读走——
+    // 粘贴异常复现时权限弹窗答案被污染成非 y 的根因
     discardNextLine = true;
     rl.write("\n");
-    return new Promise<string>((resolve) =>
-      rl.question(q, (answer) => {
-        asking = false;
-        discardNextLine = false; // rl.write 未触发 line 事件时兜底复位，防泄漏到下一行
-        gate.end();
-        resolve(answer);
-      }),
+    out.write(`${q}\n`); // 问题行（工具/路径/来源），菜单从新行渲染
+    const choice = await promptSelect<string>(
+      [
+        { label: "允许（本次执行）", value: "y" },
+        { label: "允许并始终记住（写入规则）", value: "a" },
+        { label: "拒绝", value: "n" },
+      ],
+      { out, rl }, // rl 注入：菜单期间 pause + line 静音，stdin 唯一所有权铁律
     );
+    asking = false;
+    discardNextLine = false; // rl.write 未触发 line 事件时兜底复位，防泄漏到下一行
+    gate.end();
+    return choice ?? "n"; // Escape 取消 → 拒绝
   };
   const checkPermission = opts.ctx
     ? makeCheckPermission(opts.ctx, out, ask, opts.readOnlyNames, preToolUseHook(opts.hookManager))
@@ -604,6 +617,34 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
             const head = t.reply ? preview(t.reply) : "";
             out.write(`  ${t.id}(${t.type}) ${t.status}${head ? ` — ${head}` : ""}\n`);
           }
+          break;
+        }
+        case "/sessions": {
+          // V8 ⑥：列出当前项目会话 → 方向键菜单选择 → 切入。
+          // 切入 = 加载目标会话替换当前 messages + 更新 sessionFile 指针（后续 appendMessage 写新会话）。
+          const cwd = opts.ctx?.cwd ?? process.cwd();
+          const sessions = await listSessions(sessionsDir(cwd));
+          if (sessions.length === 0) {
+            out.write("（当前项目还没有会话）\n");
+            break;
+          }
+          const chosen = await promptSelect<string>(
+            sessions.map((s) => ({
+              label: s.preview || "(无预览)",
+              value: s.file,
+              description: `${s.meta?.model ?? "-"} · ${sessionIdTime(s.id)}`, // UTC 存储 → 本地时区显示
+            })),
+            { out, rl },
+          );
+          if (chosen === undefined) {
+            out.write("已取消\n");
+            break;
+          }
+          const msgs = await loadSession(chosen);
+          messages = msgs;
+          opts.sessionFile = chosen;
+          const sid = sessions.find((s) => s.file === chosen)?.id ?? chosen;
+          out.write(`✓ 已切入会话 ${sid}（${msgs.length} 条消息，后续记录写入该会话）\n`);
           break;
         }
         case "/plan": {

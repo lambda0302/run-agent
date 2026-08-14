@@ -2,6 +2,39 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [0.8.1] - 2026-08-13
+
+### Added
+
+- **会话按 cwd 分目录**（修跨项目串会话）：`sessions/<sanitized-cwd>/`，`sanitizePath` 非字母数字 → `-`、
+  超长截断 200 字符 + sha256 8 位 hash 后缀（对齐 CC `sessionStoragePortable`）。旧文件不迁移。
+- **会话首行元数据**：新建会话第 1 行写 `{ ts, meta: { cwd, model, provider, version } }`，resume 可知上次配置。
+- **`--list`**：只列当前项目会话，每文件只读头 8192B（渐进式），输出 `id  model  时间  首条 prompt 截断 60`；
+  无需配置 / API key。
+- **`--resume <id>`**：按 id 定位历史会话（正则防路径穿越），替代「只续最新」。
+- **REPL `/sessions`**：列出当前项目会话 → 方向键菜单选择 → 切入（加载历史替换 messages + 更新 sessionFile 指针，
+  后续追加写新会话）。
+- **promptSelect 方向键菜单基建**（`src/ui/keypress.ts` + `src/ui/select.ts`）：`parseKeypress` 纯函数
+  （ANSI → KeyEvent，含裸 ESC 60ms 兜底）、`nextFocus` 纯函数（回绕 + 跳过 disabled）、readline 静音协议
+  （`rl.pause()` + 临时移除 line 监听，stdin 唯一所有权）；权限确认（`resolveAsk` 三项菜单）与 Trust 确认
+  （`askTrustProject` 两项菜单）升级为方向键菜单。
+
+### Fixed
+
+- **REPL 权限弹窗漏听注入输入流**：`promptSelect` 缺省 `input` 回退到 `process.stdin`，忽略了 REPL 注入的
+  readline 输入流 → 测试/嵌入场景下菜单收不到按键。修复：显式 `input` 优先，否则回退 `rl.input`。
+- **promptSelect 声明前引用 TDZ**：`input` 缺省解析引用了后声明的 `rl` → 调用即抛 ReferenceError。修复：
+  `rl` 先声明。
+- **会话时间显示为 UTC**：`--list` / `/sessions` 直接 slice 文件名字戳（`toISOString()`，UTC），UTC+8 用户
+  看到的会话时间偏早 8 小时。修复：存储保持 UTC（文件名字典序==时间序排序不变式依赖它），展示改用
+  `sessionIdTime(id)` 转**本地时区**（地区自适应，跟随系统时区，UTC+8 即显示北京时间）。
+
+### Changed
+
+- **会话权限收紧**：目录 `mkdir { mode: 0o700 }`、文件 `appendFile { mode: 0o600 }`（Node 的 mode 只对新文件生效）。
+- **`--list` / `/sessions` 时间列显示本地时区**（`sessionIdTime`，地区自适应）；文件名字戳仍 UTC。
+- **`--resume` 语义**：无 id 续当前项目最新会话；带 id 按 id 定位（跨项目不再续错会话）。
+
 ## [0.8.0] - 2026-08-13
 
 ### Fixed
