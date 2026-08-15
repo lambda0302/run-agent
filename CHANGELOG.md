@@ -4,23 +4,13 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-15
+
 ### Added
 
 - **`repo_map` 支持 Java 顶层声明**：`.java` 扩展名进 `EXT_LANG`，新增 java 符号正则
   （`class`/`interface`/`@interface`/`enum`/`record`，访问修饰符 + `static`/`final`/`abstract`/
   `sealed`/`non-sealed` 可选；缩进嵌套类与成员方法不误报）。
-
-### Removed
-
-- **`verify` 工具**（0.4.1 引入，现移除）：删除单文件诊断工具（对改动文件跑 tsc/eslint/test
-  把错误读回自修）。检查命令改由模型直接经 `run_bash` 执行——`verification` 子 agent 的专门
-  权限策略本就放行 readonly/local-exec/http-get 检查命令，能力无缺失。内置工具数口径不变（16），
-  权限矩阵（plan deny 清单、acceptEdits 收窄注释）与文档同步去除 verify 引用。
-
-## [0.8.1] - 2026-08-13
-
-### Added
-
 - **会话按 cwd 分目录**（修跨项目串会话）：`sessions/<sanitized-cwd>/`，`sanitizePath` 非字母数字 → `-`、
   超长截断 200 字符 + sha256 8 位 hash 后缀（对齐 CC `sessionStoragePortable`）。旧文件不迁移。
 - **会话首行元数据**：新建会话第 1 行写 `{ ts, meta: { cwd, model, provider, version } }`，resume 可知上次配置。
@@ -49,6 +39,13 @@
 - **会话权限收紧**：目录 `mkdir { mode: 0o700 }`、文件 `appendFile { mode: 0o600 }`（Node 的 mode 只对新文件生效）。
 - **`--list` / `/sessions` 时间列显示本地时区**（`sessionIdTime`，地区自适应）；文件名字戳仍 UTC。
 - **`--resume` 语义**：无 id 续当前项目最新会话；带 id 按 id 定位（跨项目不再续错会话）。
+
+### Removed
+
+- **`verify` 工具**（0.4.1 引入，现移除）：删除单文件诊断工具（对改动文件跑 tsc/eslint/test
+  把错误读回自修）。检查命令改由模型直接经 `run_bash` 执行——`verification` 子 agent 的专门
+  权限策略本就放行 readonly/local-exec/http-get 检查命令，能力无缺失。内置工具数口径不变（16），
+  权限矩阵（plan deny 清单、acceptEdits 收窄注释）与文档同步去除 verify 引用。
 
 ## [0.8.0] - 2026-08-13
 
