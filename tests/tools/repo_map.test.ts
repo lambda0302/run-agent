@@ -7,6 +7,7 @@ import {
   buildRepoMap,
   clearRepoMapCache,
   filterCandidates,
+  scanSymbols,
   scoreByPath,
 } from "../../src/tools/repo_map.js";
 
@@ -62,6 +63,65 @@ describe("scoreByPath / filterCandidates（纯函数）", () => {
   });
 });
 
+describe("scanSymbols（Java 顶层声明）", () => {
+  /** 建临时文件（非 git 即可，scanSymbols 直接按路径读）。 */
+  function javaFile(rel: string, content: string): string {
+    const dir = tempDir();
+    mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    writeFileSync(path.join(dir, rel), content, "utf8");
+    return path.join(dir, rel);
+  }
+
+  it("类/接口/枚举/record/注解类型（含访问修饰符）", async () => {
+    const f = javaFile(
+      "src/Types.java",
+      "package app;\n" +
+        "public class User {}\n" +
+        "interface Repo {}\n" +
+        "enum Mode { ON, OFF }\n" +
+        "public record Point(int x, int y) {}\n" +
+        "public @interface Api {}\n",
+    );
+    expect(await scanSymbols(f)).toEqual([
+      "public class User {}",
+      "interface Repo {}",
+      "enum Mode { ON, OFF }",
+      "public record Point(int x, int y) {}",
+      "public @interface Api {}",
+    ]);
+  });
+
+  it("static/final/abstract/sealed/non-sealed 嵌套修饰符", async () => {
+    const f = javaFile(
+      "src/Mods.java",
+      "public final class A {}\n" +
+        "public static class B {}\n" +
+        "abstract class C {}\n" +
+        "sealed class Shape {}\n" +
+        "non-sealed class Circle {}\n",
+    );
+    expect(await scanSymbols(f)).toEqual([
+      "public final class A {}",
+      "public static class B {}",
+      "abstract class C {}",
+      "sealed class Shape {}",
+      "non-sealed class Circle {}",
+    ]);
+  });
+
+  it("缩进嵌套类与成员方法不误报（只顶层）", async () => {
+    const f = javaFile(
+      "src/Outer.java",
+      "public class Outer {\n" +
+        "  private class Inner {}\n" +
+        "  public void run() {}\n" +
+        "  public static void main(String[] args) {}\n" +
+        "}\n",
+    );
+    expect(await scanSymbols(f)).toEqual(["public class Outer {"]);
+  });
+});
+
 describe("buildRepoMap（git 仓库两遍排序）", () => {
   it("符号命中 > 文件名命中 > 路径段命中", async () => {
     const dir = gitInitRepo({
@@ -93,6 +153,24 @@ describe("buildRepoMap（git 仓库两遍排序）", () => {
     const out = await buildRepoMap("findAgent");
     expect(out).toContain("src/core.ts");
     expect(out).toContain("export function findAgent");
+  });
+
+  it("java 文件顶层类符号命中，成员方法不误报", async () => {
+    const dir = gitInitRepo({
+      "src/User.java":
+        "package app;\n" +
+        "public class User {\n" +
+        "  private String name;\n" +
+        "  public String getName() { return name; }\n" +
+        "}\n",
+    });
+    process.chdir(dir);
+    const out = await buildRepoMap("User");
+    expect(out).toContain("src/User.java");
+    expect(out).toContain("public class User");
+    // 缩进成员方法（String/void 开头）不是顶层声明，不进符号行
+    expect(out).not.toContain("public String getName");
+    expect(out).not.toContain("private String name");
   });
 
   it(".git/.run-agent/node_modules/.claude/dist 永不进候选", async () => {

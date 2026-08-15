@@ -81,6 +81,9 @@ const SYMBOL_PATTERNS: Record<string, RegExp> = {
   js: /^(export )?(async )?(function|class|interface|type|const|enum) \w+/,
   py: /^(class |def |async def )/,
   go: /^(func |type .* struct|type .* interface)/,
+  // Java：无顶层自由函数，模块级定义 = 类型声明。访问修饰符 + 嵌套修饰符（static/final/abstract/
+  // sealed/non-sealed）可选；@interface 是注解类型（须在 interface 前避免被吞）。
+  java: /^(?:public\s+|protected\s+|private\s+)?(?:static\s+|final\s+|abstract\s+|sealed\s+|non-sealed\s+)*(?:class|interface|@interface|enum|record)\s+\w+/,
 };
 
 const EXT_LANG: Record<string, string> = {
@@ -94,6 +97,7 @@ const EXT_LANG: Record<string, string> = {
   ".cjs": "js",
   ".py": "py",
   ".go": "go",
+  ".java": "java",
 };
 
 function extOf(file: string): string {
@@ -334,7 +338,7 @@ export const repoMapTool: Tool = {
   description:
     "Locate where a symbol or filename lives in the repository. Cheap two-pass scan: rank files " +
     "by path match, then scan only the top candidates for top-level declarations (functions/classes/consts " +
-    "for ts/js, defs for py, funcs for go). Returns candidate paths with matching symbol lines, truncated to " +
+    "for ts/js, defs for py, funcs for go, classes for java). Returns candidate paths with matching symbol lines, truncated to " +
     "maxBytes. Falls back to a directory walk for non-git repos. Read-only, safe to run in parallel.",
   inputSchema: schema,
   isConcurrencySafe: true,

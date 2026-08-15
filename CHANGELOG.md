@@ -2,6 +2,14 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [Unreleased]
+
+### Added
+
+- **`repo_map` 支持 Java 顶层声明**：`.java` 扩展名进 `EXT_LANG`，新增 java 符号正则
+  （`class`/`interface`/`@interface`/`enum`/`record`，访问修饰符 + `static`/`final`/`abstract`/
+  `sealed`/`non-sealed` 可选；缩进嵌套类与成员方法不误报）。
+
 ## [0.8.1] - 2026-08-13
 
 ### Added
