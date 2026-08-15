@@ -12,6 +12,7 @@
 
 - **V8 0.8.0 已发布**:npm latest = 0.8.0;commit `1be0766`(权限重构主体)+ `3909e1b`(grep/glob 跨平台修复)+ `e6fc143`(V7-14 --resume 修复)+ `915eddd`/`ea036ba`(CHANGELOG 回填,**`915eddd` 即 `v0.8.0` tag 指向**);CI 三轮 9 job 全绿(531 用例)。权限重构 = run_bash 六分类 + 判定链收口前置单线 + P1-P5。文档 `docs/permissions.md`、SECURITY.md、CLAUDE.md、README、CHANGELOG 已同步。
 - **V8 0.8.1 已 commit 未发版**(2026-08-14):commit `9945887`(566 用例全绿,工作区干净),**用户明确暂不发版**——未 bump/tag/publish,发布流程 = bump 0.8.1 → tag `v0.8.1` → `npm publish`,待日后用户确认。会话按 cwd 分目录 + 首行元数据 + `--list`/`--resume <id>` + REPL `/sessions` + promptSelect 菜单基建(TDZ 与 input 回退两坑已修);时区修复(存储 UTC + 显示本地时区)。文档 `docs/message-persistence.md` 已落盘。
+- **verify 工具移除(2026-08-15,已 commit `581d96b`,未发版)**:verify(0.4.1 决策 F 引入,0.8.0 决策 D 随六分类同步)**此前一直在用**,后综合考虑**适用性与必要性**移除——适用性:verify 只认 JS/TS 生态(eslint 配置 / tsconfig.json / scripts.test 三路探测),命令白名单仅放行 tsc/eslint/test 派生命令,其它语言无适用性;必要性:检查能力模型可直接经 `run_bash` 承担,`verification` 子 agent 专门策略本就放行 readonly/local-exec/http-get 检查命令,verify 成为冗余包装。删除 `src/tools/verify.ts` + 测试,`verification` 子 agent 工具集去 verify,权限矩阵 / 文档 / CHANGELOG [Unreleased] 同步。内置工具数口径不变(16)。与 0.8.1 同处未发版桶。
 - **V7(0.7.2)已发布**:npm latest = 0.7.2;tag `v0.7.2`;CI 9 job 全绿(480 用例 / 50 文件)。**Bug_V7.md 待修权限 6 条(P1/P3 优先)是 V8 权限重构的输入**——其中 P1(plan 绕过危险目录)、P3(导航工具先于用户 deny)、P4/P5(危险命令变体)已并入 0.8.0 修复批次。
 
 **V8 交付什么(拆两版)**:
@@ -109,6 +110,7 @@
 - `makeVerificationCheckPermission(cwd)`:readonly/local-exec/http-get **自动放行**(构建/测试/lint/curl 采样不弹窗)、dangerous 与命令文本危险段 deny、network/write deny 但允许 `/tmp`·`$TMPDIR` 重定向写临时脚本、write/edit 兜底 deny。
 - `verify` 只放行 readonly/local-exec 检查命令。
 - 语义对齐后,verification 子 agent 的「禁写项目文件」承诺与六分类一致——不再走 V7 的专用白名单。
+> **后续(2026-08-15)**:verify 工具已因适用性与必要性移除(见 §0),本决策记录的是其存在时的六分类同步语义;`verification` 子 agent 专门策略与「禁写项目文件」承诺不受影响,检查命令由其直接经 run_bash 放行。
 
 ### 决策 E:会话持久化 + 会话切换(`docs/session-persistence.md` §5)
 
@@ -183,6 +185,6 @@
 
 ## §5 交接(给 V9)
 
-- **0.8.1 待发布**:已 commit `9945887`(566 用例全绿,工作区干净),**用户明确暂不发版**——发布流程 = bump 0.8.1 → tag `v0.8.1` → `npm publish`,均待用户日后确认后执行,发布后同步 CHANGELOG / docs / README / 记忆索引。
+- **0.8.1 待发布(未发版桶含两提交)**:0.8.1 主体 commit `9945887`(566 用例全绿)+ verify 工具移除 commit `581d96b`(2026-08-15,560 用例全绿),**用户明确暂不发版**——发布流程 = bump → tag `v0.8.1` → `npm publish`,均待用户日后确认后执行,发布后同步 CHANGELOG / docs / README / 记忆索引。
 - **V9 承接**:原 V8「发布与生态」——发布流水线自动化、TUI 打磨、评测公开(SWE-bench 子集)、IDE 集成、沙箱、可观测、社区运营。
 - **长期缺口(在 V8+ 桶积累)**:记忆来源分级(user 指令级 / agent 参考级)、记忆校验层、MCP readOnlyHint → 全 ask、沙箱(远期,纵深防御最终层)。
