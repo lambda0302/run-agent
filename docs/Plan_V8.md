@@ -11,7 +11,7 @@
 ### 前置核验(V0–V7 实施状态,2026-08-13)
 
 - **V8 0.8.0 已发布**:npm latest = 0.8.0;commit `1be0766`(权限重构主体)+ `3909e1b`(grep/glob 跨平台修复)+ `e6fc143`(V7-14 --resume 修复)+ `915eddd`/`ea036ba`(CHANGELOG 回填,**`915eddd` 即 `v0.8.0` tag 指向**);CI 三轮 9 job 全绿(531 用例)。权限重构 = run_bash 六分类 + 判定链收口前置单线 + P1-P5。文档 `docs/permissions.md`、SECURITY.md、CLAUDE.md、README、CHANGELOG 已同步。
-- **V8 0.8.1 已实现待发**(2026-08-13):**代码改动全部未提交**(工作区 dirty:`src/utils/sessionStorage.ts` 为 M、`src/ui/` 与相关测试为 untracked);`v0.8.0` 之后的 commit 仅 3 个 docs(`285d68a` session-persistence 落地设计 / `db5fc3c` expected-permissions 归档 / `6f51a6d` CHANGELOG 补记);566 用例全绿,未 bump/tag/publish。会话按 cwd 分目录 + 首行元数据 + `--list`/`--resume <id>` + REPL `/sessions` + promptSelect 菜单基建(TDZ 与 input 回退两坑已修);时区修复(存储 UTC + 显示本地时区)。文档 `docs/message-persistence.md` 已落盘。
+- **V8 0.8.1 已 commit 未发版**(2026-08-14):commit `9945887`(566 用例全绿,工作区干净),**用户明确暂不发版**——未 bump/tag/publish,发布流程 = bump 0.8.1 → tag `v0.8.1` → `npm publish`,待日后用户确认。会话按 cwd 分目录 + 首行元数据 + `--list`/`--resume <id>` + REPL `/sessions` + promptSelect 菜单基建(TDZ 与 input 回退两坑已修);时区修复(存储 UTC + 显示本地时区)。文档 `docs/message-persistence.md` 已落盘。
 - **V7(0.7.2)已发布**:npm latest = 0.7.2;tag `v0.7.2`;CI 9 job 全绿(480 用例 / 50 文件)。**Bug_V7.md 待修权限 6 条(P1/P3 优先)是 V8 权限重构的输入**——其中 P1(plan 绕过危险目录)、P3(导航工具先于用户 deny)、P4/P5(危险命令变体)已并入 0.8.0 修复批次。
 
 **V8 交付什么(拆两版)**:
@@ -146,7 +146,7 @@
 > 以下条目持续开放,后续归本桶处理。
 
 - **真实模型手动验证(需 key)**:六分类下 REPL 实际弹窗行为、verification 放行/拒绝、R0 自动放行、plan 下危险段 deny;`/sessions` 方向键菜单与 `--list`/`--resume <id>` 实机验证。每个版本验收尾项。
-- **REPL 兜底抛错无接盘(待修)**:compact 兜底链最终 `throw e`(`query.ts:271` / `:298` 抛出的 context_too_long 原始错误)在 REPL 下无 catch 接盘——`runTurn`(`repl.ts:418`)→ `processPrompt` → `dequeue`(`repl.ts:690-701`,仅 try/finally)→ `void dequeue()` 成 **unhandledRejection**,全项目无 `unhandledRejection` 处理器 → Node 20+ 默认 throw → **整个 REPL 进程崩溃退出**。headless 有接盘(非 json:`index.ts:99-106` 打印 `✗` 退出 1;`--json`:`runHeadless` 进 `errors[]`);子 agent 最健壮(`execute.ts:188` catch 成 `工具执行错误` 回填主循环)。修复方向:给 REPL 的 turn 加顶层 catch(渲染红字错误 + 保留 REPL 存活 + 恢复 `promptLine`),或注册全局 `unhandledRejection` 兜底。**修复后同步记录到 `docs/Bug_V8.md`**(该文件当前不存在,修复后创建)。
+- **REPL 兜底抛错无接盘(待修)**:compact 兜底链最终 `throw e`(`query.ts:271` / `:298` 抛出的 context_too_long 原始错误)在 REPL 下无 catch 接盘——`runTurn`(`repl.ts:418`)→ `processPrompt` → `dequeue`(`repl.ts:690-701`,仅 try/finally)→ `void dequeue()` 成 **unhandledRejection**,全项目无 `unhandledRejection` 处理器 → Node 20+ 默认 throw → **整个 REPL 进程崩溃退出**。headless 有接盘(非 json:`index.ts:99-106` 打印 `✗` 退出 1;`--json`:`runHeadless` 进 `errors[]`);子 agent 最健壮(`execute.ts:188` catch 成 `工具执行错误` 回填主循环)。修复方向:给 REPL 的 turn 加顶层 catch(渲染红字错误 + 保留 REPL 存活 + 恢复 `promptLine`),或注册全局 `unhandledRejection` 兜底。**已记录为 `docs/Bug_V8.md` V8-P1(待修)**——修复后回填状态与 commit。
 - **V7 权限遗留(`docs/Bug_V7.md` 待修,P1/P3 优先)**:剩余条目修完并入 V8。
 - **子 Agent 权限统一分析(待整理,非 hotfix)**:提取子 agent 的 `makeExtractMemCheckPermission`(`src/services/agents/builtin/extractMemories.ts:37-51`)对 `read_file`/`glob`/`grep` 无条件 allow,**绕过主权限引擎的路径危险段判定**(`src/permissions/engine.ts` P1),而 `src/tools/read.ts:30` 的 read_file 工具本身零路径校验——安全完全依赖 checkPermission。理论漏洞面:增量消息夹带的提示注入可诱导提取器读任意敏感路径。当前缓解仅靠 Trust 门控 + 4 工具白名单。**推迟原因**:与子 Agent 系统相关,待后续整理子 Agent 时把 extractMemories / explore / verification / 自定义类型**所有内置子 agent 的权限统一分析和控制**(含只读 allow 范围、路径白名单),不单独修。
 - **后续系统能力完善桶**:权限 / 可靠性 / Bug 修复 / 性能稳定性等工程强化条目在此积累。
@@ -167,7 +167,7 @@
 - [x] 时区:存储 UTC + `sessionIdTime` 本地时区展示(0.8.1 已实现,单测)
 - [ ] **0.8.1 发布**:bump / tag / `npm publish`(待用户确认后执行)
 - [ ] **真实模型手动验证(需 key)**:六分类弹窗行为、verification 放行/拒绝、R0 自动放行、plan 危险段 deny、`/sessions` 菜单实机(验收尾项)
-- [ ] **REPL 兜底抛错无接盘**:修复 + 记录 `docs/Bug_V8.md`
+- [ ] **REPL 兜底抛错无接盘**:修复(已记录 `docs/Bug_V8.md` V8-P1)
 - [ ] **子 Agent 权限统一分析**:与子 Agent 系统整理一并处理
 
 ## §4 风险与注意
@@ -183,6 +183,6 @@
 
 ## §5 交接(给 V9)
 
-- **0.8.1 待发布**:代码与测试已就绪(566 用例全绿),但**改动尚未 commit**(工作区 dirty)——发布流程 = 先 commit → bump 0.8.1 → tag `v0.8.1` → `npm publish`,均待用户确认后执行,发布后同步 CHANGELOG / docs / README / 记忆索引。
+- **0.8.1 待发布**:已 commit `9945887`(566 用例全绿,工作区干净),**用户明确暂不发版**——发布流程 = bump 0.8.1 → tag `v0.8.1` → `npm publish`,均待用户日后确认后执行,发布后同步 CHANGELOG / docs / README / 记忆索引。
 - **V9 承接**:原 V8「发布与生态」——发布流水线自动化、TUI 打磨、评测公开(SWE-bench 子集)、IDE 集成、沙箱、可观测、社区运营。
 - **长期缺口(在 V8+ 桶积累)**:记忆来源分级(user 指令级 / agent 参考级)、记忆校验层、MCP readOnlyHint → 全 ask、沙箱(远期,纵深防御最终层)。
