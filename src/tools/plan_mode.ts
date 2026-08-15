@@ -49,7 +49,7 @@ export function makePlanTools(deps: PlanModeOptions): PlanTools {
     name: "enter_plan_mode",
     description:
       "Switch to read-only plan mode: explore the codebase, weigh options, then present a plan " +
-      "for approval via exit_plan_mode. In plan mode write/edit/run_bash/verify/remember are denied. " +
+      "for approval via exit_plan_mode. In plan mode write/edit/run_bash/remember are denied. " +
       "Use for complex, multi-file or design tasks. Exits (and restores the previous mode) only " +
       "after the user approves the plan.",
     inputSchema: z.object({}),

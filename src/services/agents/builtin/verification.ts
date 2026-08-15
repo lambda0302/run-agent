@@ -1,10 +1,9 @@
 /**
  * verification 子 agent（V7 决策 D，0.7.1）——对抗性验证专家。
- * 与 0.4.1 `verify` 工具的关系：verify 是单文件基线（跑 tsc/eslint/test 读回错误自修）；
- * 本类型是子 agent 级证据式验证（按改动类型定策略 + 强制步骤 + 反合理化 + 探针 + 证据契约）。
- * verify 工具作为本类型的工具之一，两者并存不替代。
+ * 曾与 0.4.1 `verify` 工具并存（verify 是单文件基线，本类型是子 agent 级证据式验证）；
+ * verify 工具已移除，验证全部走 run_bash 检查命令（构建/测试/lint/curl 采样）。
  *
- * D3 强制只读：工具集 = repo_map/glob/grep/read_file + verify + run_bash（无 write/edit）。
+ * D3 强制只读：工具集 = repo_map/glob/grep/read_file + run_bash（无 write/edit）。
  * 专门权限策略：readonly/local-exec/http-get bash 自动放行（构建/测试/lint/curl 采样，不弹窗）/
  * network·write·dangerous 与命令文本危险段 deny / 项目内写入 deny / /tmp 临时脚本放行。
  * D4 输出契约：每条 check 含 `Command run:` 证据；收尾字面量 `VERDICT: PASS|FAIL|PARTIAL`；
@@ -21,13 +20,12 @@ import {
   pathInCwd,
 } from "../../../permissions/engine.js";
 
-/** verification 工具集（无写工具；verify 内部只放行 tsc/eslint/test 检查命令）。 */
+/** verification 工具集（无写工具；检查命令由 run_bash 专门权限策略放行）。 */
 export const VERIFICATION_TOOL_NAMES = new Set([
   "repo_map",
   "glob",
   "grep",
   "read_file",
-  "verify",
   "run_bash",
 ]);
 
@@ -120,7 +118,7 @@ function isTmpPath(p: string): boolean {
  *   network/write（git 拉推、装依赖、rm/sudo、重定向写项目文件）deny；
  *   写重定向项目内 deny、/tmp 放行、其余越界 deny
  * - write/edit 兜底 deny（工具集已无写工具，此为防御）
- * - 只读工具 / verify 放行；未知工具保守 deny
+ * - 只读工具放行；未知工具保守 deny
  */
 export function makeVerificationCheckPermission(
   cwd: string = process.cwd(),

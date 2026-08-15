@@ -10,7 +10,6 @@ import { bashTool } from "./tools/bash/index.js";
 import { makeRememberTool } from "./tools/remember.js";
 import { makeExploreTool } from "./tools/explore.js";
 import { repoMapTool } from "./tools/repo_map.js";
-import { verifyTool } from "./tools/verify.js";
 import type { PlanTools } from "./tools/plan_mode.js";
 import { makeSkillTool } from "./services/skills/skill_tool.js";
 import type { SkillRegistry } from "./services/skills/skill_tool.js";
@@ -117,7 +116,6 @@ export const TOOLS: Tool[] = [
   grepTool,
   bashTool,
   repoMapTool,
-  verifyTool,
 ];
 
 export interface BuildToolsOptions {

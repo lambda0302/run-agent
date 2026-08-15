@@ -24,7 +24,7 @@ const cp = (name: string, input: unknown) =>
   makeVerificationCheckPermission(process.cwd())(tool(name), input);
 
 describe("verification 类型注册（决策 D）", () => {
-  it("内置三型含 verification：工具集无写工具（repo_map/glob/grep/read_file/verify/run_bash）", () => {
+  it("内置三型含 verification：工具集无写工具（repo_map/glob/grep/read_file/run_bash）", () => {
     const registry = builtinAgentTypes();
     const def = registry.find((d) => d.name === "verification")!;
     expect(def).toBeDefined();
@@ -35,7 +35,6 @@ describe("verification 类型注册（决策 D）", () => {
       tool("glob"),
       tool("grep"),
       tool("repo_map"),
-      tool("verify"),
       tool("run_bash"),
       tool("agent"),
     ];
@@ -100,7 +99,6 @@ describe("verification 权限策略（决策 D3）", () => {
     expect(decisionOf(await cp("edit_file", { file_path: "C:/proj/x.ts" }))).toBe("deny");
     expect(decisionOf(await cp("read_file", {}))).toBe("allow");
     expect(decisionOf(await cp("repo_map", {}))).toBe("allow");
-    expect(decisionOf(await cp("verify", { file: "x.ts" }))).toBe("allow");
     expect(decisionOf(await cp("random_tool", {}))).toBe("deny");
   });
 });

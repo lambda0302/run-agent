@@ -321,14 +321,14 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **写入记忆**（0.3.2）：`remember` 工具把「用户明确要求记住 / 跨会话值得保留」的结论写进用户级 `~/.config/run-agent/CLAUDE.md`，自动去重，走权限引擎
 - **主动记忆**（0.4.0，V4）：项目级 `.run-agent/memory/`，每条记忆独立文件（frontmatter `type` + 正文），`MEMORY.md` 索引常驻 system；`remember` 默认写项目级（按 `name` 去重更新），`scope="user"` 仅用户明确要求时写；Trust 会话内只读豁免记忆目录
 - **记忆维护**（0.4.0）：`run-agent memory list/show/rm/prune` 子命令管理项目记忆；`glob`/`grep` 遍历默认忽略 `.run-agent`
-- **代码理解**（0.4.1）：`repo_map` 两遍排序定位符号/文件（git 索引 + 路径打分 + 符号扫描，非 git 仓库降级 readdir）· `explore` 只读探索子 agent（4/12/16 轮，上下文独立）· `verify` 对改动文件跑 tsc/eslint/test 把错误读回自修（命令白名单 + 120s 超时 + 30k 截断）
+- **代码理解**（0.4.1）：`repo_map` 两遍排序定位符号/文件（git 索引 + 路径打分 + 符号扫描，非 git 仓库降级 readdir）· `explore` 只读探索子 agent（4/12/16 轮，上下文独立）
 - **超大工具结果指针化**（V3）：超阈值结果落盘、消息里只留指针，模型需要时自己 `read_file`
 - **权限审批引擎**（V2 / 0.4.2 / V8）：`default` / `acceptEdits` 两档模式（bypass 已删除）+ **Plan 模式**（0.5.0，强制只读），危险目录黑名单 + 工作目录白名单 + 记忆读专属通道三层模型，**`run_bash` 六分类影响半径**（readonly 自动放行 / dangerous 硬拒 / 其余询问，判定链收口前置单线），内置危险命令与敏感路径底线，支持全局 + 项目级规则
 - **Plan 模式**（0.5.0）：复杂任务先只读探索、再出计划、经你批准才动手——`enter_plan_mode` 进入强制只读（写/执行/非只读 MCP 工具一律 deny），`exit_plan_mode` 呈现计划并弹窗审批（计划落盘 `.run-agent/plans/`），批准后自动恢复执行权限；也可直接 `/plan` 手动进入
 - **MCP 接入**（0.5.0）：接入标准协议生态（stdio / HTTP / SSE），配置 `mcp.json` 后按需 `mcp_connect <server>` 连接，MCP 工具（`mcp__server__tool`）与内置工具走同一权限管线；详见 [docs/mcp.md](docs/mcp.md)
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json` / `.run-agent/mcp.json`，防提示注入
 - **流式即时执行**（0.5.0）：工具边流式边并行执行（不必等响应完结），只读并行（上限 10）/ 写串行、结果按原顺序回填
-- **16 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `verify`（跑 tsc/eslint/test 自修）· `agent`（委派子任务）· `send_message` / `task_stop`（协调者三件套）· `enter_plan_mode` / `exit_plan_mode`（Plan 导航）· `SkillTool`（V6，加载技能）+ 配置 MCP 时的 `mcp_connect` 与动态 MCP 工具
+- **16 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `agent`（委派子任务）· `send_message` / `task_stop`（协调者三件套）· `enter_plan_mode` / `exit_plan_mode`（Plan 导航）· `SkillTool`（V6，加载技能）+ 配置 MCP 时的 `mcp_connect` 与动态 MCP 工具
 - **Hooks**（0.6.0）：五类事件（`PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `Stop`）挂 shell 命令或 HTTP 回调，配置 `settings.json`（用户级 + Trust 项目级）；`PreToolUse` 可返回 `permissionDecision` 覆盖判定（engine deny 硬底线不可放行），`Stop` 输出注入下一轮 system；详见 [docs/hooks.md](docs/hooks.md)
 - **Skills**（0.6.0）：预写专业工作流（`SKILL.md`，frontmatter `name`/`description`/`allowed-tools`），模型用 `SkillTool` 加载执行、或 REPL `/技能名` 直接触发；技能 body 调用时才加载（不塞 token），`allowed-tools` 限制工具（内置只读始终保留）；详见 [docs/skills.md](docs/skills.md)
 - **自定义命令**（0.6.0）：`.md` 模板（`@file` 内联 + 参数追加，走 agent 循环）或 `.py/.js/.ts` 脚本（解释器直跑，注入 `RUN_AGENT_CWD`/`RUN_AGENT_PROMPT`），REPL `/命令名` 触发；详见 [docs/commands.md](docs/commands.md)

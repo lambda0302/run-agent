@@ -14,7 +14,7 @@ import type { PermissionRule } from "../../src/permissions/types.js";
 
 const RULES: PermissionRule[] = [];
 
-// ── 临时目录 + chdir 辅助（与 verify.test.ts 同套路）─────────────────
+// ── 临时目录 + chdir 辅助（与 repo_map.test.ts 同套路）─────────────────
 const dirs: string[] = [];
 const originalCwd = process.cwd();
 
@@ -775,7 +775,7 @@ describe("hasPermissionsToUseTool plan 分支（V5 决策 A1）", () => {
   const readOnlyPlusExplore = (name: string) =>
     ["read_file", "glob", "grep", "repo_map", "explore"].includes(name);
 
-  it("plan 下：写/改/run_bash/verify/remember → deny", () => {
+  it("plan 下：写/改/run_bash/remember → deny", () => {
     const dir = workdir();
     expect(
       hasPermissionsToUseTool("write_file", { file_path: "a.ts" }, "plan", RULES, false, dir),
@@ -786,7 +786,6 @@ describe("hasPermissionsToUseTool plan 分支（V5 决策 A1）", () => {
     expect(
       hasPermissionsToUseTool("run_bash", { command: "ls -la" }, "plan", RULES, false, dir),
     ).toBe("deny");
-    expect(hasPermissionsToUseTool("verify", {}, "plan", RULES, false, dir)).toBe("deny");
     expect(
       hasPermissionsToUseTool("remember", { content: "记住 x" }, "plan", RULES, false, dir),
     ).toBe("deny");

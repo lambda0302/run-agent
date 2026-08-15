@@ -55,7 +55,7 @@ export function isMemoryReadExempt(tool: string, target: string, isTrusted: bool
 
 /**
  * bash 命令影响半径分类（近期落地版，见 docs/expected-permissions.md §2）：
- *   - `readonly`  R0 纯只读（闭集白名单，自动 allow）——engine / verification / verify 全部放行
+ *   - `readonly`  R0 纯只读（闭集白名单，自动 allow）——engine / verification 全部放行
  *   - `local-exec` R3a 本地执行（解释器跑脚本/检查命令）——engine ask；verification 放行（跑构建/测试/lint）
  *   - `http-get`  R4a 普通网络只读采样（curl 到 stdout，无写文件）——engine ask；verification 放行（curl 采样页面）
  *   - `network`   R4a 网络副作用（git 拉/推/克隆、装依赖、wget/gh）——engine ask；verification deny
@@ -326,7 +326,7 @@ function ruleMatches(
 }
 
 /** P2 收窄：acceptEdits 只预授权 cwd 内的路径写工具（write_file/edit_file）。
- *  无路径工具（remember/verify）、MCP 写工具、其它有路径工具在 acceptEdits 下不再无条件放行。 */
+ *  无路径工具（remember）、MCP 写工具、其它有路径工具在 acceptEdits 下不再无条件放行。 */
 const PATH_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
 
 /**
@@ -338,7 +338,7 @@ const PATH_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
  *   4. 记忆读专属通道（只读 × .run-agent/memory/** × Trust）→ allow
  *   5. 路径危险段（.git/.claude/.run-agent，未豁免）→ deny（P1：plan 下也跑）
  *   6. plan 分支：enter_plan_mode allow / exit_plan_mode ask / 只读 cwd 内 allow、cwd 外 ask /
- *      写·执行·verify·remember·MCP 非只读 deny（读侧与 default 共享，见 3-5）
+ *      写·执行·remember·MCP 非只读 deny（读侧与 default 共享，见 3-5）
  *   7. 导航工具（非 plan）免确认（enter/exit_plan_mode / mcp_connect）
  *   8. 用户 allow 规则 → allow（cwd 外访问的唯一授权通道；对 cwd 内保留"始终允许"语义）
  *   9. 白名单 + 模式兜底：run_bash 按 classify——readonly 自动 allow、其余 ask
@@ -398,7 +398,7 @@ export function hasPermissionsToUseTool(
       if (pathInCwd(p, cwd)) return "allow";
       return "ask";
     }
-    // 其余（写类 / run_bash / verify / remember / MCP 非只读）→ deny
+    // 其余（写类 / run_bash / remember / MCP 非只读）→ deny
     return "deny";
   }
 
@@ -421,10 +421,10 @@ export function hasPermissionsToUseTool(
   }
   if (p && forms && forms.some((f) => suspiciousOutsideCwd(f, cwd))) return "ask";
   if (!p) {
-    // 无路径入参的工具（repo_map/explore/verify/remember/glob 无 path 等）：不参与 cwd 边界。
+    // 无路径入参的工具（repo_map/explore/remember/glob 无 path 等）：不参与 cwd 边界。
     // 用 readOnlyNames（V5 决策 B4）而非硬编码 READ_ONLY_TOOLS：让 REPL/CLI 装配的扩展闭包
     // （协调者三件套 agent/send_message/task_stop + explore + MCP readOnlyHint）在 default 下也免确认。
-    // P2：acceptEdits 不再无条件放行无路径工具（remember/verify 等 → ask）。
+    // P2：acceptEdits 不再无条件放行无路径工具（remember 等 → ask）。
     if (readOnlyNames(tool)) return "allow";
     return "ask";
   }

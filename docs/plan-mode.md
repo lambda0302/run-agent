@@ -22,7 +22,7 @@ plan 是**强制只读**态，判定优先级高于用户模式与用户规则�
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `read_file` / `glob` / `grep` / `repo_map` / `explore`（cwd 内 / 记忆豁免）  | **allow**（只读探索）                                                   |
 | 只读工具读 cwd 外                                                            | **ask**（canPrompt=false 时降级 deny）                                  |
-| `write_file` / `edit_file` / `run_bash` / `verify` / `remember` / MCP 非只读 | **deny**（消息提示「plan 模式下只读：先调用 exit_plan_mode 呈现计划」） |
+| `write_file` / `edit_file` / `run_bash` / `remember` / MCP 非只读 | **deny**（消息提示「plan 模式下只读：先调用 exit_plan_mode 呈现计划」） |
 | `enter_plan_mode`                                                            | allow（它自身处理「已在 plan 中」）                                     |
 | `exit_plan_mode`                                                             | **ask**（用户审批）                                                     |
 

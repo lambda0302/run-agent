@@ -42,8 +42,9 @@ run-agent/
 │   │   │                       #   惰性读 body）/ skill_tool（SkillRegistry + SkillTool 激活 + 过滤）
 │   │   └── commands/           # V6 自定义命令：loader（prompt/local 两形态）/ exec（模板展开 + 脚本运行）
 │   ├── tools.ts                # Tool 接口 + 注册表 + zod→JSONSchema 转换
-│   ├── tools/                  # 13 个内置工具（read/write/edit/glob/grep/bash/remember/repo_map/explore/verify
-│   │                           #   + plan 导航 enter/exit_plan_mode + SkillTool V6）+ 动态 MCP 工具（mcp__server__tool）
+│   ├── tools/                  # 16 个内置工具（read/write/edit/glob/grep/bash/remember/repo_map/explore
+│   │                           #   + agent/send_message/task_stop + plan 导航 enter/exit_plan_mode
+│   │                           #   + mcp_connect + SkillTool）+ 动态 MCP 工具（mcp__server__tool）
 │   └── utils/
 │       ├── errors.ts           # RunAgentError
 │       └── sessionStorage.ts   # JSONL 会话持久化（含压缩边界重置点）

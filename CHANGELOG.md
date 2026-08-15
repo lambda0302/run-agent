@@ -10,6 +10,13 @@
   （`class`/`interface`/`@interface`/`enum`/`record`，访问修饰符 + `static`/`final`/`abstract`/
   `sealed`/`non-sealed` 可选；缩进嵌套类与成员方法不误报）。
 
+### Removed
+
+- **`verify` 工具**（0.4.1 引入，现移除）：删除单文件诊断工具（对改动文件跑 tsc/eslint/test
+  把错误读回自修）。检查命令改由模型直接经 `run_bash` 执行——`verification` 子 agent 的专门
+  权限策略本就放行 readonly/local-exec/http-get 检查命令，能力无缺失。内置工具数口径不变（16），
+  权限矩阵（plan deny 清单、acceptEdits 收窄注释）与文档同步去除 verify 引用。
+
 ## [0.8.1] - 2026-08-13
 
 ### Added
