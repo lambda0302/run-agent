@@ -4,10 +4,11 @@
  * 2. 回显造成的连续 y（yy / yyy）仍判 allow；
  * 3. makeCheckPermission 在 ask 时走注入 ask，拒绝时输出原因。
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { makeCheckPermission } from "../../src/cli/repl.js";
 import { resolveAsk } from "../../src/permissions/prompt.js";
 import { loadRules } from "../../src/permissions/store.js";
@@ -176,5 +177,159 @@ describe("makeCheckPermission（REPL 内组装：engine + 注入 ask）", () => 
     });
     expect(await cp(runBash, { command: "rm -rf /" })).toBe("deny");
     expect(called).toBe(false);
+  });
+
+  it("exit_plan_mode 拒绝 → 输出「用户拒绝了计划」而非 plan 只读提示（V8 决策 I）", async () => {
+    const written: string[] = [];
+    const out = { write: (s: string) => written.push(s) } as unknown as NodeJS.WritableStream;
+    const exitPlan: Tool = {
+      name: "exit_plan_mode",
+      description: "exit",
+      inputSchema: z.object({ plan: z.string().optional() }),
+      call: async () => ({ result: "" }),
+    };
+    const cp = makeCheckPermission(
+      ctx({ mode: "plan", planFilePath: path.join(tmpHome(), "plan.md") }),
+      out,
+      async () => "n",
+    );
+    expect(await cp(exitPlan, { plan: "计划" })).toBe("deny");
+    expect(written.join("")).toContain("已拒绝执行 exit_plan_mode");
+    expect(written.join("")).toContain("用户拒绝了计划");
+  });
+});
+
+describe("resolveAsk（V8 决策 I：exit_plan_mode 编辑后批准）", () => {
+  const exitPlan: Tool = {
+    name: "exit_plan_mode",
+    description: "exit",
+    inputSchema: z.object({ plan: z.string().optional() }),
+    call: async () => ({ result: "" }),
+  };
+
+  it("exit_plan_mode 弹窗传 EXIT_OPTIONS（四选项含「编辑后批准」）", async () => {
+    let opts: unknown;
+    const r = await resolveAsk(
+      exitPlan,
+      { plan: "计划" },
+      ctx({ mode: "plan", planFilePath: path.join(tmpHome(), "plan.md") }),
+      async (_q, options) => {
+        opts = options;
+        return "y";
+      },
+    );
+    expect(r).toBe("allow");
+    expect((opts as Array<{ label: string }>).map((o) => o.label)).toEqual([
+      "批准计划",
+      "编辑后批准",
+      "拒绝",
+      "批准并始终记住（写入规则）",
+    ]);
+  });
+
+  it("普通工具弹窗仍传 ANSWER_OPTIONS（三选项，无编辑项）", async () => {
+    let opts: unknown;
+    await resolveAsk(runBash, { command: "echo hi" }, ctx(), async (_q, options) => {
+      opts = options;
+      return "y";
+    });
+    expect((opts as Array<{ label: string }>).map((o) => o.label)).toEqual([
+      "允许（本次执行）",
+      "允许并始终记住（写入规则）",
+      "拒绝",
+    ]);
+  });
+
+  it("「编辑后批准」：编辑器返回新内容 → allow + updatedInput {plan, planWasEdited:true}", async () => {
+    const planFile = path.join(tmpHome(), "plan.md");
+    mkdirSync(path.dirname(planFile), { recursive: true });
+    writeFileSync(planFile, "原始计划", "utf8");
+    const r = await resolveAsk(
+      exitPlan,
+      { plan: "原始计划" },
+      ctx({ mode: "plan", planFilePath: planFile }),
+      async () => "e",
+      undefined,
+      async () => "修改后的计划",
+    );
+    expect(r).toEqual({ decision: "allow", updatedInput: { plan: "修改后的计划", planWasEdited: true } });
+  });
+
+  it("「编辑后批准」：编辑器内容无变化 → allow + updatedInput {plan}（planWasEdited 不置位）", async () => {
+    const planFile = path.join(tmpHome(), "plan.md");
+    mkdirSync(path.dirname(planFile), { recursive: true });
+    writeFileSync(planFile, "原样计划", "utf8");
+    const r = await resolveAsk(
+      exitPlan,
+      { plan: "原样计划" },
+      ctx({ mode: "plan", planFilePath: planFile }),
+      async () => "e",
+      undefined,
+      async () => "原样计划",
+    );
+    expect(r).toEqual({ decision: "allow", updatedInput: { plan: "原样计划" } });
+  });
+
+  it("「编辑后批准」：无 openEditor 注入 → deny（headless/测试保守拒绝）", async () => {
+    const r = await resolveAsk(
+      exitPlan,
+      { plan: "计划" },
+      ctx({ mode: "plan", planFilePath: path.join(tmpHome(), "plan.md") }),
+      async () => "e",
+    );
+    expect(r).toBe("deny");
+  });
+
+  it("「编辑后批准」：编辑器取消/失败（返回 undefined）→ deny", async () => {
+    const planFile = path.join(tmpHome(), "plan.md");
+    mkdirSync(path.dirname(planFile), { recursive: true });
+    writeFileSync(planFile, "计划", "utf8");
+    const r = await resolveAsk(
+      exitPlan,
+      { plan: "计划" },
+      ctx({ mode: "plan", planFilePath: planFile }),
+      async () => "e",
+      undefined,
+      async () => undefined,
+    );
+    expect(r).toBe("deny");
+  });
+
+  it("「编辑后批准」：计划文件不存在且无 plan 入参 → deny（无内容可编辑）", async () => {
+    const r = await resolveAsk(
+      exitPlan,
+      {},
+      ctx({ mode: "plan", planFilePath: path.join(tmpHome(), "missing", "plan.md") }),
+      async () => "e",
+      undefined,
+      async () => "内容",
+    );
+    expect(r).toBe("deny");
+  });
+
+  it("「编辑后批准」：计划文件不存在但有 plan 入参 → 先落盘给编辑器打开，改后 allow", async () => {
+    const planFile = path.join(tmpHome(), "sub", "plan.md");
+    const r = await resolveAsk(
+      exitPlan,
+      { plan: "初始计划" },
+      ctx({ mode: "plan", planFilePath: planFile }),
+      async () => "e",
+      undefined,
+      async (p) => {
+        expect(readFileSync(p, "utf8")).toBe("初始计划"); // 已落盘，编辑器有内容可改
+        return "编辑后计划";
+      },
+    );
+    expect(r).toEqual({ decision: "allow", updatedInput: { plan: "编辑后计划", planWasEdited: true } });
+  });
+
+  it("exit_plan_mode 拒绝（n）→ deny（用户拒绝计划）", async () => {
+    const r = await resolveAsk(
+      exitPlan,
+      { plan: "计划" },
+      ctx({ mode: "plan", planFilePath: path.join(tmpHome(), "plan.md") }),
+      async () => "n",
+    );
+    expect(r).toBe("deny");
   });
 });

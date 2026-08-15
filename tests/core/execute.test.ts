@@ -152,6 +152,65 @@ describe("executeToolCalls 异常与权限", () => {
   });
 });
 
+// ── V8 决策 I：PermissionCheckResult.updatedInput 合并进实际执行入参 ─────────────────
+describe("executeToolCalls（V8 决策 I：updatedInput 合并）", () => {
+  it("checkPermission 返回 allow + updatedInput → 工具用合并后的入参执行（编辑后批准语义）", async () => {
+    let seen: unknown;
+    const exitPlan: Tool = {
+      name: "exit_plan_mode",
+      description: "exit",
+      inputSchema: z.object({
+        plan: z.string(),
+        planWasEdited: z.boolean().optional(),
+      }),
+      isConcurrencySafe: false,
+      async call(input) {
+        seen = input;
+        return { result: "ok" };
+      },
+    };
+    const results = await executeToolCalls([tu("exit_plan_mode", "e1", { plan: "旧计划" })], {
+      tools: [exitPlan],
+      checkPermission: async () => ({
+        decision: "allow",
+        updatedInput: { plan: "用户改的计划", planWasEdited: true },
+      }),
+    });
+    expect(results).toEqual(["ok"]);
+    expect(seen).toEqual({ plan: "用户改的计划", planWasEdited: true }); // 覆盖 + 合并
+  });
+
+  it("allow 不携带 updatedInput → 用原始入参执行", async () => {
+    let seen: unknown;
+    const read = makeTool("read", 0, true);
+    read.tool.call = async (input) => {
+      seen = input;
+      return { result: "x" };
+    };
+    const results = await executeToolCalls([tu("read", "a", { id: 5 })], {
+      tools: [read.tool],
+      checkPermission: async () => "allow",
+    });
+    expect(results).toEqual(["x"]);
+    expect(seen).toEqual({ id: 5 });
+  });
+
+  it("deny 携带 reason → 拒绝回填用 reason，不执行工具本体", async () => {
+    const read = makeTool("read", 0, true);
+    let called = false;
+    read.tool.call = async () => {
+      called = true;
+      return { result: "x" };
+    };
+    const results = await executeToolCalls([tu("read", "a", { id: 5 })], {
+      tools: [read.tool],
+      checkPermission: async () => ({ decision: "deny", reason: "hook 拒绝: no" }),
+    });
+    expect(results).toEqual(["hook 拒绝: no"]);
+    expect(called).toBe(false);
+  });
+});
+
 // ── V5 决策 C：StreamingToolExecutor 直测（流式边执行语义）──────────────────────────
 describe("StreamingToolExecutor 流式即时执行", () => {
   it("addTool 后工具立即启动（不等 getResults）", async () => {

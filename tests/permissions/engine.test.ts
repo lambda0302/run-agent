@@ -326,6 +326,58 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     ).toBe("deny");
   });
 
+  // ── V8 决策 G2：plan 文件豁免（精确文件 + 仅 plan 模式，先于路径危险段）──
+  it("plan 下：精确计划文件 write/edit/read 豁免；非精确/非 plan/其它工具不豁免", () => {
+    const dir = workdir();
+    const plansDir = path.join(dir, ".run-agent", "plans");
+    const planFile = path.join(plansDir, "plan-2026-08-11T10-00-00-000Z.md");
+    // 8 参传 planFilePath（第 7 参 readOnlyNames 用 undefined → 走默认）
+    const hasPerm = (
+      tool: string,
+      input: unknown,
+      mode: "default" | "acceptEdits" | "plan",
+      planFilePath?: string,
+    ) => hasPermissionsToUseTool(tool, input, mode, RULES, false, dir, undefined, planFilePath);
+
+    // 豁免生效：精确计划文件 + plan 模式 → write/edit/read 都放行
+    for (const t of ["write_file", "edit_file", "read_file"]) {
+      expect(hasPerm(t, { file_path: planFile }, "plan", planFile), t).toBe("allow");
+    }
+    // 同目录其它文件 → 路径危险段仍 deny（豁免绝不放大 `.run-agent/**` 禁令）
+    expect(
+      hasPerm("write_file", { file_path: path.join(plansDir, "other.md") }, "plan", planFile),
+    ).toBe("deny");
+    // 其它 `.run-agent` 路径：read_file 同样 deny（豁免只认精确计划文件，
+    // 普通 `.run-agent` 读仍被段 deny——与「plan 下只读就 allow」的直觉相反，须锁定）
+    expect(
+      hasPerm("read_file", { file_path: path.join(plansDir, "other.md") }, "plan", planFile),
+    ).toBe("deny");
+    expect(
+      hasPerm("read_file", { file_path: path.join(dir, ".run-agent", "permissions.json") }, "plan", planFile),
+    ).toBe("deny");
+    // 非 plan 模式 → 无豁免，路径危险段 deny（ctx.planFilePath 仍在也不放行）
+    for (const mode of ["default", "acceptEdits"] as const) {
+      expect(hasPerm("write_file", { file_path: planFile }, mode, planFile), mode).toBe("deny");
+    }
+    // plan 下但计划文件未确定（planFilePath undefined）→ 无豁免
+    expect(hasPerm("write_file", { file_path: planFile }, "plan")).toBe("deny");
+    // plan 下非豁免工具（run_bash 引用计划文件）→ 不豁免（命令文本危险段 deny）
+    expect(hasPerm("run_bash", { command: `cat ${planFile}` }, "plan", planFile)).toBe("deny");
+    // 计划文件用 glob/pattern 形态（非 file_path）→ 不豁免（豁免只认 file_path 形态）
+    expect(
+      hasPermissionsToUseTool(
+        "grep",
+        { pattern: "x", path: planFile },
+        "plan",
+        RULES,
+        false,
+        dir,
+        undefined,
+        planFile,
+      ),
+    ).toBe("deny");
+  });
+
   // ── run_bash .run-agent 收口（决策 D 第 5 步）──
   it("run_bash 命令引用 `.run-agent` 段 → deny（default + acceptEdits）", () => {
     const denyCmds = [

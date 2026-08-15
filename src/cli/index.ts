@@ -288,6 +288,11 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
         ctx.mode = m;
       },
       canPrompt,
+      // V8 决策 G（#1）：进入 plan 即把计划文件路径写入 ctx——引擎「plan 文件写豁免」
+      // （engine 步骤 4.5，读 ctx.planFilePath）+ 审批弹窗「编辑后批准」据此定位文件。
+      onEnter: (planFilePath) => {
+        ctx.planFilePath = planFilePath;
+      },
     });
   }
 

@@ -135,6 +135,45 @@ describe("buildSystemPrompt（稳定/动态边界）", () => {
     expect(noPlan).not.toContain("enter_plan_mode");
   });
 
+  it("V8 决策 J：mode=plan → 注入 plan 专用提示词段（状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束）", async () => {
+    const { home, cwd } = makeHome();
+    const sys = await buildSystemPrompt(
+      {
+        cwd,
+        isTrusted: false,
+        bare: false,
+        hasPlanMode: true,
+        mode: "plan",
+        planFilePath: path.join(cwd, ".run-agent", "plans", "plan-x.md"),
+      },
+      { homeDir: home, date: "d", git: {} },
+    );
+    // 状态确认 + 只读纪律：模型知道自己在规划，不乱用工具
+    expect(sys).toContain("你当前处于 plan 模式（强制只读）");
+    expect(sys).toContain("不要在 plan 模式下尝试任何写操作");
+    // explore 引导（#2）：委派只读 explore 子 agent，并行且聚焦
+    expect(sys).toContain("用 agent 工具委派 explore 子 agent");
+    expect(sys).toContain("并行发多个");
+    // 计划文件路径：write/edit 增量打磨，exit 时从该文件读最终计划
+    expect(sys).toContain("计划文件:");
+    expect(sys).toContain("write_file/edit_file 增量打磨");
+    expect(sys).toContain(path.join(cwd, ".run-agent", "plans", "plan-x.md"));
+    // 收束：拒绝后停止等待
+    expect(sys).toContain("若用户拒绝");
+    expect(sys).toContain("等待用户下一条指令");
+    // 不再注入"先调用 enter_plan_mode"的引导（已在 plan 中，语义不重复）
+    expect(sys).not.toContain("先调用 enter_plan_mode");
+  });
+
+  it("V8 决策 J：mode=plan 但未装配 plan 工具（hasPlanMode 缺省）→ 仍注入 plan 专用段（状态与纪律最关键）", async () => {
+    const { home, cwd } = makeHome();
+    const sys = await buildSystemPrompt(
+      { cwd, isTrusted: false, bare: false, mode: "plan" },
+      { homeDir: home, date: "d", git: {} },
+    );
+    expect(sys).toContain("你当前处于 plan 模式（强制只读）");
+  });
+
   it("注入日期/git/CLAUDE.md，动态在稳定之后", async () => {
     const { home, cwd } = makeHome();
     mkdirSync(path.join(home, ".config", "run-agent"), { recursive: true });

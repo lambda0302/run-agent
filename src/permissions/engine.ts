@@ -1,9 +1,10 @@
 /**
  * V3 权限判定引擎（零依赖，纯函数）。
- * 判定顺序（V4.5 决策 D 演进 + V5 决策 A1 加 plan 分支 + V7.5 收口前置单线管线）：
+ * 判定顺序（V4.5 决策 D 演进 + V5 决策 A1 加 plan 分支 + V7.5 收口前置单线管线 + V8 决策 G2 plan 文件豁免）：
  *   用户 deny（P3：先于一切内置放行，含导航工具）→ 内置危险命令（classify dangerous）
- *   → 命令文本危险段（.run-agent/.git/.claude，/i）→ 记忆读专属通道 → 路径危险段（P1：plan 下也跑）
- *   → plan 分支（强制只读，读侧与 default 共享）→ 导航工具 → 用户 allow → 白名单(cwd) → 兜底 ask。
+ *   → 命令文本危险段（.run-agent/.git/.claude，/i）→ 记忆读专属通道 → plan 文件豁免
+ *   → 路径危险段（P1：plan 下也跑）→ plan 分支（强制只读，读侧与 default 共享）→ 导航工具
+ *   → 用户 allow → 白名单(cwd) → 兜底 ask。
  * 对齐 Claude Code 的 hasPermissionsToUseTool 混合模型，但更保守：公开项目误拦比漏拦安全。
  */
 import { realpathSync } from "node:fs";
@@ -28,6 +29,11 @@ export const DENY_BASH_SEGMENTS_RE = /(?<=^|[\s\\/'"`=(;|&])\.(run-agent|git|cla
  *  SkillTool 为 V6 技能加载（只回填 body 文本、无副作用）：必须归只读，
  *  否则 headless/one-shot 在 default 模式返回 ask → 无弹窗直接 deny，技能全废。 */
 const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep", "repo_map", "SkillTool"]);
+
+/** V8 决策 G2：plan 文件豁免覆盖的工具（精确文件 + plan 模式才放行）。
+ *  含 read_file——计划文件在 `.run-agent` 危险段下，路径危险段（第 5 步）会先于 plan 分支
+ *  拦截读，不豁免则模型写后无法回读（盲写）。豁免仍是精确文件，不放大 `.run-agent/**`。 */
+const PLAN_FILE_TOOLS = new Set(["write_file", "edit_file", "read_file"]);
 
 /** 内置只读判定（V5 决策 B4）：hasPermissionsToUseTool 第 7 参 readOnlyNames 的缺省值。
  *  REPL 装配时并入 explore（只读探索子 agent）与 MCP 只读 hint 名，见 repl.ts。 */
@@ -336,6 +342,7 @@ const PATH_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
  *   2. 内置危险命令（classify dangerous：R2/R3b/R4b）→ deny（任何规则/模式不可覆盖）
  *   3. 命令文本危险段（.run-agent/.git/.claude，/i）→ deny（第二道防线，尽力而为）
  *   4. 记忆读专属通道（只读 × .run-agent/memory/** × Trust）→ allow
+ *   4.5. plan 文件豁免（精确文件 + plan 模式，write/edit/read 该文件）→ allow（V8 决策 G2）
  *   5. 路径危险段（.git/.claude/.run-agent，未豁免）→ deny（P1：plan 下也跑）
  *   6. plan 分支：enter_plan_mode allow / exit_plan_mode ask / 只读 cwd 内 allow、cwd 外 ask /
  *      写·执行·remember·MCP 非只读 deny（读侧与 default 共享，见 3-5）
@@ -347,6 +354,8 @@ const PATH_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
  *      write_file·edit_file → allow / default 写 ask；cwd 外 → 只读也 ask
  * @param isTrusted 记忆读豁免的 Trust 门控；缺省 false（未传 = 无豁免）。
  * @param cwd 工作目录白名单边界；缺省 process.cwd()。
+ * @param planFilePath V8 决策 G：当前 plan 会话的计划文件绝对路径（REPL 经 ctx 传入；
+ *  缺省 undefined = 无 plan 文件豁免，现有行为不变）。
  */
 export function hasPermissionsToUseTool(
   tool: string,
@@ -356,6 +365,7 @@ export function hasPermissionsToUseTool(
   isTrusted = false,
   cwd = process.cwd(),
   readOnlyNames: (name: string) => boolean = isBuiltinReadOnlyTool,
+  planFilePath?: string,
 ): Decision {
   const p = inputPath(input);
   const forms = p ? pathForms(p) : undefined;
@@ -377,6 +387,20 @@ export function hasPermissionsToUseTool(
   //    （防 `.run-agent/memory/out` → `/etc/passwd` 这类 symlink 指向记忆外的换名逃逸）。
   if (forms && forms.every((f) => isMemoryReadExempt(tool, f, isTrusted))) {
     return "allow";
+  }
+
+  // 4.5 V8 决策 G2：plan 文件豁免——精确文件 + 仅 plan 模式，比记忆读豁免更窄
+  //    （只放开这一个文件，不放大 `.run-agent/**` 写禁令）。放在路径危险段（第 5 步）
+  //    之前：计划文件在 `.run-agent` 段下，必须在该段 deny 前放行（同记忆豁免前置的原因）。
+  //    所有形态都必须等于计划文件（realpath 双形态防 symlink 别名——`every` 自证不比豁免宽）。
+  if (
+    planFilePath !== undefined &&
+    mode === "plan" &&
+    PLAN_FILE_TOOLS.has(tool) &&
+    forms !== undefined
+  ) {
+    const planForms = pathForms(planFilePath);
+    if (forms.every((f) => planForms.some((pf) => f === pf))) return "allow";
   }
 
   // 5. 路径危险段（小写化比较，任一形态命中即 deny；P1：plan 下也跑——收口前置单线）

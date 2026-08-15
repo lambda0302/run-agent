@@ -2,7 +2,7 @@
 
 > 上游:`docs/Plan.md` 路线图 V8 段(279-286 行):「V8 号专做**系统能力完善**——权限加固、可靠性、真实模型验证、性能稳定性等工程强化,后续此类条目一律归本桶。」
 > 上一版本交接:`docs/Plan_V7.md`(0.7.0 + 0.7.1 + 0.7.2,多 Agent 编排三件套 + verification + 后台记忆双轨)+ `docs/Bug_V7.md`(13 已解决 + 6 待修权限 P1/P3 优先 + 1 flake)。**V0–V7 全部已实施并发布**(CHANGELOG 0.1.0 → 0.7.2,CI 9 job 全绿)。
-> 本版本一句话:把 V8 号从「发布与生态」(整体顺延为 V9)让给**系统能力完善**——权限重构(六分类 + 判定链收口)、会话持久化 + 会话切换、真实模型验证、可靠性兜底等工程强化。
+> 本版本一句话:把 V8 号从「发布与生态」(整体顺延为 V9)让给**系统能力完善**——权限重构(六分类 + 判定链收口)、会话持久化 + 会话切换、真实模型验证、可靠性兜底等工程强化。0.8.2 追加「Plan 模式完善」(计划文件前置 + explore 引导 + planWasEdited)。
 > 触发:2026-08-13 重新规划——原 V8「发布与生态」顺延 V9,V8 专做系统能力完善;权限重构(`docs/expected-permissions.md`)即 V8 首个交付。2026-08-14 补:会话切换(V2.5 推迟项)提前到 V8 完成(0.8.1)。
 > 参考实现:`F:\CC_Source\claude-code-sourcemap\restored-src` —— 权限判定链参考 CC `hasPermissionsToUseTool` 的收口单线;会话持久化对齐 CC `sessionStoragePortable.ts`(按 cwd 分目录 + 首行元数据)与 `promptSelect` 方向键菜单(对齐 CC select UI)。本版裁剪其规模、保持零新依赖。
 
@@ -11,8 +11,8 @@
 ### 前置核验(V0–V7 实施状态,2026-08-13)
 
 - **V8 0.8.0 已发布**:npm latest = 0.8.0;commit `1be0766`(权限重构主体)+ `3909e1b`(grep/glob 跨平台修复)+ `e6fc143`(V7-14 --resume 修复)+ `915eddd`/`ea036ba`(CHANGELOG 回填,**`915eddd` 即 `v0.8.0` tag 指向**);CI 三轮 9 job 全绿(531 用例)。权限重构 = run_bash 六分类 + 判定链收口前置单线 + P1-P5。文档 `docs/permissions.md`、SECURITY.md、CLAUDE.md、README、CHANGELOG 已同步。
-- **V8 0.8.1 已 commit 未发版**(2026-08-14):commit `9945887`(566 用例全绿,工作区干净),**用户明确暂不发版**——未 bump/tag/publish,发布流程 = bump 0.8.1 → tag `v0.8.1` → `npm publish`,待日后用户确认。会话按 cwd 分目录 + 首行元数据 + `--list`/`--resume <id>` + REPL `/sessions` + promptSelect 菜单基建(TDZ 与 input 回退两坑已修);时区修复(存储 UTC + 显示本地时区)。文档 `docs/message-persistence.md` 已落盘。
-- **verify 工具移除(2026-08-15,已 commit `581d96b`,未发版)**:verify(0.4.1 决策 F 引入,0.8.0 决策 D 随六分类同步)**此前一直在用**,后综合考虑**适用性与必要性**移除——适用性:verify 只认 JS/TS 生态(eslint 配置 / tsconfig.json / scripts.test 三路探测),命令白名单仅放行 tsc/eslint/test 派生命令,其它语言无适用性;必要性:检查能力模型可直接经 `run_bash` 承担,`verification` 子 agent 专门策略本就放行 readonly/local-exec/http-get 检查命令,verify 成为冗余包装。删除 `src/tools/verify.ts` + 测试,`verification` 子 agent 工具集去 verify,权限矩阵 / 文档 / CHANGELOG [Unreleased] 同步。内置工具数口径不变(16)。与 0.8.1 同处未发版桶。
+- **V8 0.8.1 已发布**(2026-08-15):commit `746254f` + tag `v0.8.1` + npm latest `0.8.1`,会话持久化 + 会话切换 + verify 移除一并入版。会话按 cwd 分目录 + 首行元数据 + `--list`/`--resume <id>` + REPL `/sessions` + promptSelect 菜单基建(TDZ 与 input 回退两坑已修);时区修复(存储 UTC + 显示本地时区)。文档 `docs/message-persistence.md` 已落盘。发布后 CI run #40 挂 6 job(`sessionStorage.test.ts` 把 Windows 路径字面量喂 `sanitizePath`,POSIX 拼 cwd 断言失败),`d8aeb09` 测试-only 修复,run #41 9 job 全绿——见 `docs/Bug_V8.md` V8-5。
+- **verify 工具移除(2026-08-15,随 0.8.1 发布)**:verify(0.4.1 决策 F 引入,0.8.0 决策 D 随六分类同步)**此前一直在用**,后综合考虑**适用性与必要性**移除——适用性:verify 只认 JS/TS 生态(eslint 配置 / tsconfig.json / scripts.test 三路探测),命令白名单仅放行 tsc/eslint/test 派生命令,其它语言无适用性;必要性:检查能力模型可直接经 `run_bash` 承担,`verification` 子 agent 专门策略本就放行 readonly/local-exec/http-get 检查命令,verify 成为冗余包装。删除 `src/tools/verify.ts` + 测试,`verification` 子 agent 工具集去 verify,权限矩阵 / 文档 / CHANGELOG [Unreleased] 同步。内置工具数口径不变(16)。已随 0.8.1 发布。
 - **V7(0.7.2)已发布**:npm latest = 0.7.2;tag `v0.7.2`;CI 9 job 全绿(480 用例 / 50 文件)。**Bug_V7.md 待修权限 6 条(P1/P3 优先)是 V8 权限重构的输入**——其中 P1(plan 绕过危险目录)、P3(导航工具先于用户 deny)、P4/P5(危险命令变体)已并入 0.8.0 修复批次。
 
 **V8 交付什么(拆两版)**:
@@ -38,6 +38,7 @@
 - **零新依赖**:全部复用 engine.ts / sessionStorage.ts / readline + 现有 UI 层;promptSelect 用 Node 原生 readline + ANSI 转义,无 Ink。
 - 新增文件:`src/ui/keypress.ts`、`src/ui/select.ts`(promptSelect 基建);会话层改动集中在 `src/utils/sessionStorage.ts`(分目录 + 元数据 + `--list` 只读头 + id 定位)。
 - 新增文档:`docs/session-persistence.md` §5(V8 落地设计)、`docs/message-persistence.md`(总览)、`docs/permissions.md`(权限重构行为文档)、`docs/expected-permissions.md`(设计稿归档)。
+- 0.8.2 增量:引擎 `hasPermissionsToUseTool` 可选参 `planFilePath`(plan 文件写豁免)+ `execute.ts` `PermissionCheckResult.updatedInput` 透传;编辑器 `$EDITOR`/`$VISUAL` → `code --wait` → Windows `notepad` 兜底(测试注入 fake)。零新依赖。
 
 **不做的事(留待后续,诚实标注)**:
 
@@ -47,6 +48,12 @@
 - **沙箱** → 远期(V8+ 桶):跨平台成本极大(Windows 无原生 chroot、macOS sandbox-exec 已弃用),Linux/macOS 优先轻量隔离(bubblewrap),Windows 降级静态判定;纵深防御最终层,不取代静态分层。
 - **TUI 打磨**(Ink 渲染 / 工具执行可视化)→ V9。
 - **发布流水线自动化 / IDE 集成 / 评测公开 / 沙箱 / 可观测** → V9。
+
+**0.8.2「Plan 模式完善」**(2026-08-15 制定并实施;对齐 CC `restored-src` EnterPlanModeTool / ExitPlanModeV2Tool / plans.ts / messages.ts 5-phase 引导):
+
+14. **计划文件前置**(决策 G,已实施):进入 plan 即确定计划文件路径(沿用 `.run-agent/plans/plan-<ts>.md`),模型 plan 期间用 write_file/edit_file **增量打磨**;`exit_plan_mode` 入参 `plan` 变可选覆盖、缺省读盘。引擎新增「plan 文件写豁免」——精确文件 + 仅 plan 模式,收口在路径危险段之前。机制:`PermissionContext.planFilePath`(进入 plan 时 `makePlanTools.onEnter` 写入 ctx)+ `getPlanFilePath()` getter + `repl.ts` 每轮把 mode/planFilePath 同步进 systemCtx。
+15. **plan 期间 explore 子 agent 引导**(决策 H,已实施):system prompt 动态段(仅 `ctx.mode === "plan"` 注入)引导模型用 agent + explore 子 agent 只读探测(轻量 CC Phase 1),避免乱用写工具被 deny 浪费时间。权限面已就绪,纯提示词工作。注入点为 `formatDynamic` 的 `mode === "plan"` 分支(五段:状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束)。
+16. **planWasEdited**(决策 I,已实施):REPL 审批弹窗加「编辑后批准」→ 系统编辑器改计划文件 → 批准时检测内容变化,经 `updatedInput` 传给工具 → tool_result 标注「已批准计划(用户已编辑)」,模型据此知道计划被改过(对齐 CC CCR `updatedInput` 语义)。管线:`resolveAsk` 返回 `PermissionCheckResult`(可含 updatedInput)+ `execute.ts` allow 时并入 item.input + `plan_mode.ts` exit schema 收 `planWasEdited`。
 
 ---
 
@@ -141,6 +148,63 @@
 - **grep 单文件 + glob POSIX 绝对路径误报未找到**(0.7 引入):单文件搜索的 glob 过滤原用绝对路径匹配 `**/*.ts`(正则无法从开头 `/` 起配)→ Linux/macOS 误报、Windows 盘符侥幸通过(CI 6 job 挂 / Windows 3 job 过)。修复:单文件分支的 glob 改用文件名判定;`globToRegExp` 导出 + 回归测试锁定「POSIX 绝对路径不匹配 / 相对与文件名匹配」。
 - **`--resume` 误选子 agent transcript 作主会话**(V7-14):`subagent-*.jsonl` 与主会话同目录,倒序字典序下字母开头的 `subagent-*` 恒排时间戳(数字开头)之前(`'s'>'2'`,与时间先后无关)→ 确定性误选。修复:过滤 `SUBAGENT_FILE_PREFIX` 前缀(sessionStorage.ts 定义、registry.ts 复用统一常量)。
 
+### 决策 G:计划文件前置(对齐 CC `utils/plans.ts` 文件主载体)
+
+**动机**:现状 `exit_plan_mode` 入参内联计划全文、批准瞬间才直写 `plan-<ts>.md`——用户批准前看不到计划文件、无法先审改;模型也不能增量打磨计划。CC 是文件主载体:进入即定 `<slug>.md` 路径,plan 期间模型用 Write/Edit 增量写,exit 读盘 + 审批 + 恢复。
+
+**G1. 生命周期**:
+
+- 进入 plan(`enter_plan_mode` / `/plan`)时工厂确定 `planFilePath = <cwd>/.run-agent/plans/plan-<ts>.md`,并随 tool_result / system 动态段暴露给模型。
+- plan 期间模型可 `read_file`/`write_file`/`edit_file` 该文件(豁免见 G2);增量写盘,exit 时文件即最终计划。
+- `exit_plan_mode` 入参改 `{ plan?: string }`:有 → 覆盖写盘再审批;无 → 读盘。
+- 批准后恢复 `prePlanMode`(同现状),tool_result 回填最终计划 + 路径 + `planWasEdited`(决策 I)。
+
+**G2. 「plan 文件写豁免」(核心,收口纪律)**:
+
+- `hasPermissionsToUseTool` 加**可选参** `planFilePath?: string`(第 8 参,缺省 undefined,现有行为不变)。
+- 豁免条件(必须比记忆读豁免**更窄**):`mode === "plan"` ∧ `tool ∈ {write_file, edit_file, read_file}` ∧ 输入路径**所有形态**(`pathForms`)绝对化后 == planFilePath(realpath 防 symlink 别名)。
+- 位置:记忆豁免(第 4 步)之后、**路径危险段(第 5 步)之前**——plan 文件在 `.run-agent` 段下,必须在该段 deny 前放行(同记忆豁免前置的原因)。
+- **偏差(与设计 G2 不同)**:设计稿原写「不豁免 read_file(读走正常只读路径,plan 下本就 allow)」——但判定链收口前置单线下,路径危险段(第 5 步)先于 plan 分支(第 6 步),`read_file` 读 plan 文件(含 `.run-agent` 段)会被段 deny,**读不到计划文件**。故 `PLAN_FILE_TOOLS = {write_file, edit_file, read_file}` 把 read 也纳入豁免(模型 plan 期间需重读打磨中的文件)。豁免仍是「精确文件 + plan 模式」而非目录前缀,防 `.run-agent` 写禁令被变相放宽(同目录其它文件照旧段 deny,单测锁定)。
+- 子查询经 `PermissionBridge` 继承主循环 checkPermission(闭包实时读 `ctx.mode`),plan 下子 agent 也只会放开这一个文件。
+
+**G3. 装配(已实施)**:`makePlanTools` 进入 plan(`enter_plan_mode` / `/plan` 共用状态机 `doEnter`)时确定 `planFilePath` 并回调 `onEnter(planFilePath)` → `cli/index.ts` 写入 `ctx.planFilePath`(`PermissionContext` 加 `planFilePath?` 字段);`makeCheckPermission` 每次判定把 `ctx.planFilePath` 传 engine 第 8 参(实时读,模型轮内进入 plan 也生效);`repl.ts` 每轮 `runTurn` 把 `ctx.mode`/`ctx.planFilePath` 同步进 `systemCtx`(context.ts 动态段在 plan 模式注入计划文件路径,与决策 H 合并);`/plan` 手动入口同样经 doEnter,REPL 打印计划文件路径。
+
+**G4. 兼容**:旧会话批准时已直写的 `plan-<ts>.md` 无破坏;新流程首次写盘即建文件。
+
+### 决策 H:plan 期间 explore 子 agent 引导(对齐 CC Phase 1)
+
+**动机**:plan 模式下模型不知道可用 explore 子 agent,可能乱用写工具被 deny 浪费时间(用户观察)。CC 用 `plan_mode` attachment(5-phase 剧本)显式引导;run-agent 不引入 attachment,改用 **system prompt 动态段**(V3 决策 6 已有按轮重建机制)。
+
+**H1. 权限面已就绪(零权限改动,已核实)**:
+
+- `agent` 工具在 plan 下放行:readOnlyNames 缺省含 `agent`(`repl.ts:172-178`)。
+- explore 子 agent 只读四件套(repo_map/glob/grep/read,`registry.ts:38`)。
+- 子查询经 `PermissionBridge` 继承主循环 checkPermission;`makeCheckPermission` 闭包**实时读** `ctx.mode` → **plan 只读自动传播到子 agent**(general-purpose 子 agent 在 plan 下写同样被 deny)。
+
+**H2. 注入内容**(仅 `ctx.mode === "plan"` 时,放动态段 git/日期之后):
+
+- 状态确认:「当前处于 plan 模式(强制只读),写/改/执行会被权限拒绝。请用只读工具探索。」
+- 引导:「探索代码库请用 agent 工具 + `explore` 子 agent(只读);范围广/不确定时并行发多个(各给一个探索焦点)。」
+- 收束:「准备就绪后用 exit_plan_mode 呈现计划,等待用户批准。不要重复尝试被拒绝的写操作。」
+- 复用 `SystemContext.hasPlanMode`(已存在),扩为 hasPlanMode ∧ mode==='plan' 时注入完整引导。
+
+**H3. 工程量**:纯提示词 + `buildSystemPrompt` 测试(plan 模式含引导 / 非 plan 不含)。
+
+### 决策 I:planWasEdited(对齐 CC CCR `updatedInput`)
+
+**动机**:用户批准前改了计划,模型不知道 → 按旧计划实现。CC 在 CCR 经 `permissionResult.updatedInput` 把编辑后计划 + `planWasEdited` 传回 tool_result。
+
+**I1. 管线扩展**:
+
+- `PermissionCheckResult`(`execute.ts:28`)加可选 `updatedInput?: Record<string, unknown>`;`execute.ts:122` 判定 allow 且携带 updatedInput 时并入 `tu.input` 再走 `tool.call`(`:184` 重新 zod parse)。
+- `prompt.ts` `resolveAsk`:exit_plan_mode 弹窗从 y/n/a 扩为 y/n/e/a(或菜单加「编辑后批准」);选 e → 打开系统编辑器(`$EDITOR` → `$VISUAL` → `code --wait` → Windows `notepad`)编辑计划文件 → 等退出 → 重读,与弹窗快照比对 → 变化则 `planWasEdited = true`,批准时返回 `{ decision: "allow", updatedInput: { plan, planWasEdited: true } }`。
+- `repl.ts` `makeCheckPermission`:透传 updatedInput。
+- `plan_mode.ts` exit tool:inputSchema 加可选 `planWasEdited`;tool_result 标注「已批准计划(用户已编辑)」vs「已批准计划」。
+
+**I2. 编辑器注入**:`PlanModeOptions`/REPL 注入 `openEditor` 工厂(测试注入 fake 返回改后内容),避免 CI 依赖真实编辑器。
+
+**I3. 测试**:resolveAsk 编辑分支、execute updatedInput 透传、plan_mode tool_result 标注、编辑器 fake。
+
 ---
 
 ## §2 待修与待整理(当前开放项)
@@ -171,6 +235,10 @@
 - [ ] **真实模型手动验证(需 key)**:六分类弹窗行为、verification 放行/拒绝、R0 自动放行、plan 危险段 deny、`/sessions` 菜单实机(验收尾项)
 - [ ] **REPL 兜底抛错无接盘**:修复(已记录 `docs/Bug_V8.md` V8-P1)
 - [ ] **子 Agent 权限统一分析**:与子 Agent 系统整理一并处理
+- [x] **0.8.2 计划文件前置**:进入 plan 确定路径 + 模型 write/edit 增量写 + exit 读盘/覆盖 + engine 豁免矩阵(plan 写 plan 文件 allow / 写其它 `.run-agent/**` deny / 非 plan 写 deny / symlink 别名 deny;单测锁定)
+- [x] **0.8.2 explore 引导**:plan 模式 system 动态段注入探索引导、非 plan 不含;子查询经 bridge 继承 plan 只读(单测锁定)
+- [x] **0.8.2 planWasEdited**:审批弹窗「编辑后批准」+ updatedInput 透传 + tool_result 标注「用户已编辑」(单测锁定)
+- [ ] **0.8.2 发布**:bump / tag / `npm publish`(用户确认后)
 
 ## §4 风险与注意
 
@@ -182,9 +250,13 @@
 6. **时区双轨不变量**:文件名字戳必须保持 UTC(字典序==时间序),展示层才做本地时区转换;若改存储格式会破坏排序不变式。
 7. **提示注入 via 恶意记忆**:project/local CLAUDE.md 仅 Trust 注入;子 agent 只读 allow 面扩大是已知理论风险,靠 Trust + 白名单缓解,统一分析挂 §2。
 8. **工程纪律**:`exactOptionalPropertyTypes` 条件 spread、`verbatimModuleSyntax` `import type`、读文件剥 BOM——沿用 V0–V7 纪律。
+9. **plan 文件豁免的收口**:豁免必须比记忆读豁免更窄(精确文件 + plan 模式),不能按目录前缀——否则 `.run-agent` 写禁令被变相放宽;realpath 防 symlink 别名;判定矩阵测试把复发前置 CI。
+10. **编辑器阻塞交互**:审批弹窗挂起等编辑器退出是阻塞式,编辑器被杀/超时要兜底(提示放弃编辑或重试);Windows 无 `$EDITOR` 时 notepad 兜底;测试注入 fake。
+11. **updatedInput 透传安全**:只对 allow 且显式携带时合并入 tool input,不默认透传;值经 zod 重新校验(plan 受 exit schema 约束)。
+12. **system 引导 token**:探索引导段仅 plan 模式注入且保持短(约 3 行),plan 期间 system 每轮重建会重复计入——比 CC attachment 节流简单,代价可接受。
 
 ## §5 交接(给 V9)
 
-- **0.8.1 待发布(未发版桶含两提交)**:0.8.1 主体 commit `9945887`(566 用例全绿)+ verify 工具移除 commit `581d96b`(2026-08-15,560 用例全绿),**用户明确暂不发版**——发布流程 = bump → tag `v0.8.1` → `npm publish`,均待用户日后确认后执行,发布后同步 CHANGELOG / docs / README / 记忆索引。
+- **0.8.1 已发布**(2026-08-15):commit `746254f` + tag `v0.8.1` + npm latest `0.8.1`;发布后 CI 测试-only 修复 `d8aeb09`(见 `docs/Bug_V8.md` V8-5)。**V8 桶内下一交付 = 0.8.2「Plan 模式完善」**(决策 G/H/I:计划文件前置 + explore 引导 + planWasEdited),方案已制定见 §1。
 - **V9 承接**:原 V8「发布与生态」——发布流水线自动化、TUI 打磨、评测公开(SWE-bench 子集)、IDE 集成、沙箱、可观测、社区运营。
 - **长期缺口(在 V8+ 桶积累)**:记忆来源分级(user 指令级 / agent 参考级)、记忆校验层、MCP readOnlyHint → 全 ask、沙箱(远期,纵深防御最终层)。

@@ -30,4 +30,7 @@ export interface PermissionContext {
   /** 工作目录白名单边界（V4.5 决策 B）：路径在 cwd 外的工具调用一律 ask/deny，
    *  除非命中用户 allow 规则或专属通道。 */
   cwd: string;
+  /** V8 决策 G：当前 plan 会话的计划文件路径（makePlanTools 进入 plan 时经 onEnter 写入；
+   *  未进入 plan 时 undefined）。供引擎「plan 文件写豁免」+ 审批弹窗「编辑后批准」使用。 */
+  planFilePath?: string;
 }

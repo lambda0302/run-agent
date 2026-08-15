@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import type { PermissionMode } from "../permissions/types.js";
 import type { LLMMessage, ToolSpec } from "../providers/types.js";
 import {
   MEMORY_TYPES,
@@ -197,6 +198,13 @@ export interface SystemContext {
   bare: boolean;
   /** V5 决策 A4：本会话装配了 plan 模式工具（仅交互 REPL）时注入引导。 */
   hasPlanMode?: boolean;
+  /** V8 决策 J（#4）：当前权限模式——"plan" 时动态段注入 plan 专用提示词段
+   *  （状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束）；非 plan 不注入。
+   *  runTurn 每轮从 ctx 同步（模型可经 enter_plan_mode 在轮内进入 plan）。 */
+  mode?: PermissionMode;
+  /** V8 决策 G（#1）：当前 plan 会话的计划文件路径（进入 plan 后经 onEnter 写入 ctx，
+   *  runTurn 每轮同步至此）。plan 模式下注入，引导模型用 write_file/edit_file 增量打磨该文件。 */
+  planFilePath?: string;
   /** V5 决策 B3：已配置的 MCP server 摘要（如 "filesystem(stdio), github(http)"）；
    *  非空时动态段注入「已配置 + 调 mcp_connect 连接」引导。 */
   mcpServers?: string;
@@ -224,7 +232,20 @@ function formatDynamic(
   hookOutput?: string,
 ): string {
   const bits: string[] = [`当前时间: ${date}`, `工作目录: ${ctx.cwd}`];
-  if (ctx.hasPlanMode) {
+  if (ctx.mode === "plan") {
+    // V8 决策 J（#4）：plan 模式专用提示词段——只在真正处于 plan 模式时注入。
+    // 状态确认让模型知道"自己在规划"（不会乱用工具被 deny 浪费时间）；
+    // explore 引导（#2）让探索委派给只读 explore 子 agent，并行且聚焦。
+    bits.push(
+      [
+        "你当前处于 plan 模式（强制只读）——写/改/执行类工具（write_file/edit_file/run_bash 等）会被权限拒绝。",
+        "不要在 plan 模式下尝试任何写操作或运行命令，也不要因权限拒绝而困惑：那是预期行为。只读探索 + 打磨计划文件即可。",
+        "优先用只读工具探索代码库、权衡多种方案后给出计划。范围广/不确定时，用 agent 工具委派 explore 子 agent 做只读探索：每个 explore 聚焦一个探索问题，范围广时并行发多个（explore 只读安全，可放心并行）。",
+        `计划文件: ${ctx.planFilePath ?? "路径见 enter_plan_mode 返回"}——可用 write_file/edit_file 增量打磨内容，exit_plan_mode 批准时从该文件读取最终计划。`,
+        "准备就绪后用 exit_plan_mode 呈现计划供用户审批。若用户拒绝，立即停止当前工作并等待用户下一条指令；若用户有修改意见，按其指示调整后再重新呈现计划。",
+      ].join("\n"),
+    );
+  } else if (ctx.hasPlanMode) {
     bits.push(
       "plan 模式：复杂/多文件/设计型任务先调用 enter_plan_mode 只读探索，再用 exit_plan_mode 呈现计划，批准后自动恢复执行。若用户拒绝了 exit_plan_mode 的计划，立即停止当前工作并等待用户下一条指令——不要输出实现内容，也不要重复尝试执行任务",
     );

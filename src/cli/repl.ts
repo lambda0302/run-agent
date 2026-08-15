@@ -2,6 +2,7 @@ import * as readline from "node:readline";
 import { COMPACT_MIN_MESSAGES, maybeAutoCompact } from "../core/compact.js";
 import { buildSystemPrompt } from "../core/context.js";
 import type { SystemContext } from "../core/context.js";
+import { decisionOf } from "../core/execute.js";
 import type { PermissionCheckResult } from "../core/execute.js";
 import { runQuery } from "../core/query.js";
 import type { RunQueryResult } from "../core/query.js";
@@ -13,7 +14,7 @@ import {
   inputPath,
   isBuiltinReadOnlyTool,
 } from "../permissions/engine.js";
-import { resolveAsk } from "../permissions/prompt.js";
+import { ANSWER_OPTIONS, resolveAsk } from "../permissions/prompt.js";
 import type { PermissionContext } from "../permissions/types.js";
 import type { LLMMessage, LLMClient } from "../providers/types.js";
 import type { Tool } from "../tools.js";
@@ -32,6 +33,8 @@ import {
   sessionsDir,
 } from "../utils/sessionStorage.js";
 import { promptSelect } from "../ui/select.js";
+import type { SelectOption } from "../ui/select.js";
+import { openSystemEditor } from "../utils/editor.js";
 
 // 定位 readline 内部"已从流里读出、还没触发行事件"的残留（无换行收尾的末行）。
 // Node 20/22 是 `_line` 字符串字段；Node 24 起改 `Symbol(_line_buffer)`。公共 getter
@@ -160,13 +163,16 @@ export function createHandlers(emit: (s: string) => void) {
  * @param preToolUse V6 决策 A4：PreToolUse hook 回调（HookManager.onPreToolUse）。
  *            engine 判定后执行；hook 决策可覆盖（ask→allow / allow→deny / ask→deny），
  *            但 engine deny 是硬底线不可被 hook 放行。hook deny 的 reason 并入拒绝回填。
+ * @param openEditor V8 决策 I（#3）：系统编辑器注入——resolveAsk 的「编辑后批准」（exit_plan_mode
+ *            弹窗多一项 e）用它打开 ctx.planFilePath 让用户改计划。headless/测试不注入。
  */
 export function makeCheckPermission(
   ctx: PermissionContext,
   out: NodeJS.WritableStream,
-  ask?: (question: string) => Promise<string>,
+  ask?: (question: string, options?: SelectOption<string>[]) => Promise<string>,
   readOnlyNames?: (name: string) => boolean,
   preToolUse?: (name: string, input: unknown) => Promise<PreToolUseDecision | undefined>,
+  openEditor?: (filePath: string) => Promise<string | undefined>,
 ): (tool: Tool, input: unknown, source?: string) => Promise<PermissionCheckResult> {
   const isReadOnlyName =
     readOnlyNames ??
@@ -177,6 +183,8 @@ export function makeCheckPermission(
       name === "send_message" ||
       name === "task_stop");
   return async (tool, input, source) => {
+    // V8 决策 G（#1）：引擎第 8 参 = 当前 plan 会话的计划文件路径（读 ctx 实时值——
+    // 模型经 enter_plan_mode 在轮内进入 plan 也立即生效；子 agent 经桥继承同样放行）
     const d = hasPermissionsToUseTool(
       tool.name,
       input,
@@ -185,6 +193,7 @@ export function makeCheckPermission(
       ctx.isTrusted,
       ctx.cwd,
       isReadOnlyName,
+      ctx.planFilePath,
     );
     const hook = preToolUse ? await preToolUse(tool.name, input) : undefined;
     if (hook?.permissionDecision === "deny") {
@@ -197,11 +206,15 @@ export function makeCheckPermission(
     // hook 放行：engine 未 deny 时生效（engine deny 是硬底线，不可被 hook 解除）
     if (hook?.permissionDecision === "allow" && d !== "deny") return "allow";
     if (d !== "ask") return d;
-    const resolved = await resolveAsk(tool, input, ctx, ask, source);
-    if (resolved === "deny") {
+    const resolved = await resolveAsk(tool, input, ctx, ask, source, openEditor);
+    if (decisionOf(resolved) === "deny") {
       const target = inputPath(input);
       const reason =
-        ctx.mode === "plan" ? "plan 模式下只读：先调用 exit_plan_mode 呈现计划" : "未获授权";
+        tool.name === "exit_plan_mode"
+          ? "用户拒绝了计划"
+          : ctx.mode === "plan"
+            ? "plan 模式下只读：先调用 exit_plan_mode 呈现计划"
+            : "未获授权";
       out.write(`✗ 已拒绝执行 ${tool.name}${target ? ` ${target}` : ""}（${reason}）\n`);
     }
     return resolved;
@@ -351,7 +364,7 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
   let pasteTailPending = false; // 本 prompt 同 chunk 里有无换行残留末行（粘贴末行，见 line handler）
   let discardNextLine = false; // ask 弹窗前冲掉的残留直接丢弃
   let asking = false; // 弹窗进行中：flush 的冲残留不得写入，防污染菜单输入
-  const ask = async (q: string): Promise<string> => {
+  const ask = async (q: string, options?: SelectOption<string>[]): Promise<string> => {
     gate.begin();
     asking = true;
     // 冲掉 readline 缓冲里无换行残留（用户输入过但未提交的部分），防止它被菜单读走——
@@ -359,21 +372,23 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
     discardNextLine = true;
     rl.write("\n");
     out.write(`${q}\n`); // 问题行（工具/路径/来源），菜单从新行渲染
-    const choice = await promptSelect<string>(
-      [
-        { label: "允许（本次执行）", value: "y" },
-        { label: "允许并始终记住（写入规则）", value: "a" },
-        { label: "拒绝", value: "n" },
-      ],
-      { out, rl }, // rl 注入：菜单期间 pause + line 静音，stdin 唯一所有权铁律
-    );
+    // V8 决策 I（#3）：exit_plan_mode 的弹窗由 resolveAsk 传 EXIT_OPTIONS（多「编辑后批准」）；
+    // 其余走缺省三选项。rl 注入：菜单期间 pause + line 静音，stdin 唯一所有权铁律。
+    const choice = await promptSelect<string>(options ?? ANSWER_OPTIONS, { out, rl });
     asking = false;
     discardNextLine = false; // rl.write 未触发 line 事件时兜底复位，防泄漏到下一行
     gate.end();
     return choice ?? "n"; // Escape 取消 → 拒绝
   };
   const checkPermission = opts.ctx
-    ? makeCheckPermission(opts.ctx, out, ask, opts.readOnlyNames, preToolUseHook(opts.hookManager))
+    ? makeCheckPermission(
+        opts.ctx,
+        out,
+        ask,
+        opts.readOnlyNames,
+        preToolUseHook(opts.hookManager),
+        openSystemEditor, // V8 决策 I2：编辑器缺省 = 系统编辑器（$EDITOR/$VISUAL/notepad）
+      )
     : undefined;
   // V7 决策 A4：子 agent 前台复用父级权限（桥写入；后台由 manager 包装 ask→deny，绝不弹窗）
   if (opts.permissionBridge) opts.permissionBridge.checkPermission = checkPermission;
@@ -421,6 +436,17 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
       opts.skillRegistry?.resetActive(); // V6 决策 B2：turn 边界重置活跃技能
       // 每轮重建 system（日期/git 动态部分刷新；git 有 3s TTL 缓存）。
       // V6 决策 A1：上一轮 Stop hook 输出注入动态段（hookOutput）。
+      // V8 决策 J（#4）：plan 专用提示词段按当前权限模式注入——模型可经 enter_plan_mode 在
+      // 轮内进入 plan，systemCtx 是启动时快照，须每轮从 ctx 同步 mode/planFilePath 再重建。
+      if (opts.systemCtx && opts.ctx) {
+        opts.systemCtx.mode = opts.ctx.mode;
+        // exactOptionalPropertyTypes：可选属性不能直接赋 undefined——有则写、无则删（回到未注入态）
+        if (opts.ctx.planFilePath !== undefined) {
+          opts.systemCtx.planFilePath = opts.ctx.planFilePath;
+        } else {
+          delete opts.systemCtx.planFilePath;
+        }
+      }
       const system = opts.systemCtx
         ? await buildSystemPrompt(
             opts.systemCtx,
@@ -657,8 +683,11 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
             out.write("已在 plan 模式：用 exit_plan_mode 呈现计划，批准后自动恢复\n");
             break;
           }
+          // V8 决策 G（#1）：/plan 手动入口同样确定计划文件路径（与 enter_plan_mode 共用状态机）
+          const pf = opts.planMode.getPlanFilePath();
           out.write(
-            "已进入 plan 模式（只读）：让模型只读探索，用 exit_plan_mode 呈现计划；批准后自动恢复执行权限。\n",
+            "已进入 plan 模式（只读）：让模型只读探索，用 exit_plan_mode 呈现计划；批准后自动恢复执行权限。\n" +
+              (pf ? `计划文件路径: ${pf}（模型可用 write_file/edit_file 增量打磨）\n` : ""),
           );
           break;
         }

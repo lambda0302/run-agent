@@ -24,8 +24,13 @@ export const MAX_CONCURRENCY = 10;
  * 权限回调的返回：既可是裸 Decision（allow/deny），也可是「决策 + 拒绝原因」。
  * V6 决策 A4：PreToolUse hook 拒绝时带上 reason，deny 回填优先用 hook reason
  * （比 tool.denyMessage 更具体），再退回通用消息。
+ * V8 决策 I：审批允许时可携带 updatedInput——合并进工具实际执行的入参（如「编辑后批准」时
+ * 把用户改过的 plan + planWasEdited 传给 exit_plan_mode）。只对 allow 且显式携带时生效，
+ * 不默认透传（plan 值仍经工具 zod schema 重新校验）。
  */
-export type PermissionCheckResult = Decision | { decision: Decision; reason?: string };
+export type PermissionCheckResult =
+  | Decision
+  | { decision: Decision; reason?: string; updatedInput?: Record<string, unknown> };
 
 export function decisionOf(r: PermissionCheckResult): Decision {
   return typeof r === "string" ? r : r.decision;
@@ -33,6 +38,10 @@ export function decisionOf(r: PermissionCheckResult): Decision {
 
 export function denyReasonOf(r: PermissionCheckResult): string | undefined {
   return typeof r === "object" ? r.reason : undefined;
+}
+
+export function updatedInputOf(r: PermissionCheckResult): Record<string, unknown> | undefined {
+  return typeof r === "object" ? r.updatedInput : undefined;
 }
 
 export interface ExecuteOptions {
@@ -67,6 +76,9 @@ interface ExecutorItem {
   tool: Tool | null;
   /** 权限判定：未知工具 / 被拒 = deny；无 checkPermission = allow */
   permission: Decision;
+  /** 实际执行的入参：缺省 tu.input；V8 决策 I：审批 allow 携带 updatedInput 时合并覆盖。
+   *   zod parse 与 tool.call 都用它（原始 tu.input 保留在 item.tu.input 供 trace 对照）。 */
+  input: unknown;
   result: string | null;
   resolve: (r: string) => void;
   promise: Promise<string>;
@@ -107,6 +119,7 @@ export class StreamingToolExecutor {
       tool,
       // 无 checkPermission = 无权限限制 → allow；未知工具在下面改判 deny
       permission: tool ? "allow" : "deny",
+      input: tu.input,
       result: null,
       resolve,
       promise,
@@ -127,6 +140,18 @@ export class StreamingToolExecutor {
           denyReasonOf(r) ?? tool.denyMessage ?? `权限被拒绝: 未授权执行 ${tu.name}`,
         );
         return;
+      }
+      // V8 决策 I：allow 且显式携带 updatedInput → 合并进实际执行入参（tool.call 用 item.input）。
+      // tu.input 类型是 unknown：只有普通对象才可展开合并，否则以 updatedInput 为最终入参。
+      const ui = updatedInputOf(r);
+      if (ui) {
+        const base =
+          item.tu.input &&
+          typeof item.tu.input === "object" &&
+          !Array.isArray(item.tu.input)
+            ? (item.tu.input as Record<string, unknown>)
+            : {};
+        item.input = { ...base, ...ui };
       }
     }
     this.queue.push(item);
@@ -177,7 +202,7 @@ export class StreamingToolExecutor {
     let result: string;
     try {
       const tool = item.tool!;
-      const parsed = tool.inputSchema.safeParse(item.tu.input);
+      const parsed = tool.inputSchema.safeParse(item.input);
       if (!parsed.success) {
         result = `参数校验失败: ${parsed.error.message}`;
       } else {

@@ -2,7 +2,7 @@
  * V5 决策 A 测试：plan 模式导航工具 + /plan 手动入口 + 装配边界 + REPL 全流程集成。
  * REPL 集成用注入的 ask 弹窗模拟 y/n（不建 readline，保持 hermetic）。
  */
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -114,11 +114,69 @@ describe("makePlanTools（V5 决策 A2/A3）", () => {
     );
   });
 
-  it("exit_plan_mode：缺 plan 入参 → zod 校验抛错", async () => {
+  it("exit_plan_mode：缺 plan 入参 → 读计划文件；文件不存在 → 错误结果（不抛，模式不变）", async () => {
     const box = modeBox("plan");
     const pt = makePlanTools({ getMode: box.get, setMode: box.set, canPrompt: true });
     const [, exit] = pt.tools as [Tool, Tool];
-    await expect(exit.call({})).rejects.toThrow();
+    const r = await exit.call({});
+    expect(box.state.mode).toBe("plan"); // 读盘失败不退出 plan
+    expect(r.result).toContain("计划文件不存在或不可读");
+    expect(r.result).toContain("write_file");
+  });
+
+  it("exit_plan_mode：缺 plan 入参 → 读盘（模型 write/edit 打磨的计划文件即最终计划）", async () => {
+    const plansDir = path.join(tempDir(), ".run-agent", "plans");
+    const box = modeBox("default");
+    const now = new Date("2026-08-11T10:00:00.000Z");
+    const pt = makePlanTools({
+      getMode: box.get,
+      setMode: box.set,
+      canPrompt: true,
+      plansDir,
+      now: () => now,
+    });
+    const [enter, exit] = pt.tools as [Tool, Tool];
+    await enter.call({});
+    // 模型 plan 期间 write_file 增量打磨计划文件（首次写建目录+文件）
+    mkdirSync(plansDir, { recursive: true });
+    writeFileSync(path.join(plansDir, "plan-2026-08-11T10-00-00-000Z.md"), "打磨后的计划", "utf8");
+    const r = await exit.call({});
+    expect(box.state.mode).toBe("default"); // 读盘成功 → 恢复进入前模式
+    expect(r.result).toContain("已批准");
+    expect(r.result).toContain("打磨后的计划");
+    expect(r.result).toContain("plan-2026-08-11T10-00-00-000Z.md");
+  });
+
+  it("exit_plan_mode：planWasEdited=true → 回填「已批准计划（用户已编辑）」", async () => {
+    const box = modeBox("default");
+    const pt = makePlanTools({ getMode: box.get, setMode: box.set, canPrompt: true });
+    const [enter, exit] = pt.tools as [Tool, Tool];
+    await enter.call({});
+    const r = await exit.call({ plan: "计划", planWasEdited: true });
+    expect(r.result).toContain("已批准计划（用户已编辑）");
+    expect(r.result).toContain("计划");
+  });
+
+  it("enter_plan_mode：onEnter 回调携带计划文件路径；getPlanFilePath 进入后可查询", async () => {
+    const plansDir = path.join(tempDir(), ".run-agent", "plans");
+    const box = modeBox("default");
+    const now = new Date("2026-08-11T10:00:00.000Z");
+    let onEntered: string | undefined;
+    const pt = makePlanTools({
+      getMode: box.get,
+      setMode: box.set,
+      canPrompt: true,
+      plansDir,
+      now: () => now,
+      onEnter: (p) => void (onEntered = p),
+    });
+    expect(pt.getPlanFilePath()).toBeUndefined(); // 未进入 plan
+    const [enter] = pt.tools as [Tool, Tool];
+    await enter.call({});
+    const expected = path.join(plansDir, "plan-2026-08-11T10-00-00-000Z.md");
+    expect(onEntered).toBe(expected); // onEnter 回调
+    expect(pt.getPlanFilePath()).toBe(expected); // getter 可查询
+    expect(enter.call.length).toBe(0); // enter 无入参（决策 A2）
   });
 
   it("/plan 手动入口：记录 prePlanMode 并进入；已在 plan 返回 false", async () => {
@@ -297,6 +355,49 @@ describe("REPL 全流程集成（两条进入路径 → 禁写 → 审批 → �
     expect(await checkPermission(exit, { plan: "计划" })).toBe("allow");
     await exit.call({ plan: "计划" });
     expect(ctx.mode).toBe("default");
+  });
+
+  it("plan 下：计划文件 write/edit/read 精确豁免；同目录其它文件与退出后仍被段 deny", async () => {
+    const cwd = tempDir();
+    const plansDir = path.join(cwd, ".run-agent", "plans");
+    const now = new Date("2026-08-11T10:00:00.000Z");
+    const ctx: PermissionContext = {
+      mode: "default",
+      rules: [],
+      canPrompt: true,
+      isTrusted: false,
+      cwd,
+    };
+    const pt = makePlanTools({
+      getMode: () => ctx.mode,
+      setMode: (m) => {
+        ctx.mode = m;
+      },
+      canPrompt: true,
+      plansDir,
+      now: () => now,
+      onEnter: (p) => {
+        ctx.planFilePath = p; // cli/index.ts 的 onEnter 装配（V8 决策 G）
+      },
+    });
+    const [enter, exit] = pt.tools as [Tool, Tool];
+    const checkPermission = makeCheckPermission(ctx, silentOut);
+    await enter.call({});
+    const planFile = ctx.planFilePath!;
+    expect(planFile).toBe(path.join(plansDir, "plan-2026-08-11T10-00-00-000Z.md"));
+
+    // 精确计划文件：plan 下豁免（引擎步骤 4.5，先于路径危险段）——write/edit/read 都放行
+    expect(await checkPermission(fakeWrite, { file_path: planFile })).toBe("allow");
+    expect(await checkPermission(fakeRead, { file_path: planFile })).toBe("allow");
+    // 同目录其它文件：路径危险段（.run-agent 段）仍 deny——豁免绝不放大禁令
+    expect(await checkPermission(fakeWrite, { file_path: path.join(plansDir, "other.md") })).toBe(
+      "deny",
+    );
+
+    // 退出 plan：豁免失效——同一计划文件回到路径危险段 deny（ctx.planFilePath 仍在但 mode != plan）
+    await exit.call({ plan: "计划" });
+    expect(ctx.mode).toBe("default");
+    expect(await checkPermission(fakeWrite, { file_path: planFile })).toBe("deny");
   });
 
   it("one-shot（canPrompt=false）不装配 plan 工具：model 无入口，不会死锁", () => {
