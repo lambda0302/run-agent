@@ -1,6 +1,6 @@
 # 架构
 
-> 现状：V6（0.6.0，已交付：Hooks + Skills + 自定义命令 + Headless）。
+> 现状：V8（0.8.0，已交付：权限重构——run_bash 六分类 + 判定链收口前置单线；0.8.1 会话持久化 + 会话切换已实现待发）。
 > 分层、统一消息格式、配置、会话持久化的演进见各版本计划与 [Plan.md](Plan.md)。
 
 ## 目录结构
@@ -40,7 +40,11 @@ run-agent/
 │   │   │                       #   PreToolUse/PostToolUse/SessionStart/SessionEnd/Stop × execCommand/execHttp）
 │   │   ├── skills/             # V6 Skills：loader（frontmatter 扫描 + Trust 门控 + readSkillBody
 │   │   │                       #   惰性读 body）/ skill_tool（SkillRegistry + SkillTool 激活 + 过滤）
-│   │   └── commands/           # V6 自定义命令：loader（prompt/local 两形态）/ exec（模板展开 + 脚本运行）
+│   │   ├── commands/           # V6 自定义命令：loader（prompt/local 两形态）/ exec（模板展开 + 脚本运行）
+│   │   ├── agents/             # V7 多 Agent 编排：registry（AgentRegistry + builtinAgentTypes 三型 +
+│   │   │                       #   CORE_TEAM_TOOLS）/ builtin（general-purpose / explore / verification /
+│   │   │                       #   extractMemories 内部类型）/ loader（自定义 frontmatter）/ team（后台任务）
+│   │   └── extract/            # V7.1 后台记忆提取双轨：engine（游标增量 + 互斥 + MIN_EXTRACT_INCREMENT 成本守卫）
 │   ├── tools.ts                # Tool 接口 + 注册表 + zod→JSONSchema 转换
 │   ├── tools/                  # 16 个内置工具（read/write/edit/glob/grep/bash/remember/repo_map/explore
 │   │                           #   + agent/send_message/task_stop + plan 导航 enter/exit_plan_mode
@@ -48,7 +52,7 @@ run-agent/
 │   └── utils/
 │       ├── errors.ts           # RunAgentError
 │       └── sessionStorage.ts   # JSONL 会话持久化（含压缩边界重置点）
-├── tests/                      # vitest（41 文件 / 387 用例，含 headless 集成测试）
+├── tests/                      # vitest（52 文件 / 560 用例，含 headless 集成测试）
 └── dist/                       # tsup 打包产物（git 忽略）
 ```
 
@@ -64,7 +68,9 @@ cli (入口：参数 → 配置 → 会话文件 → systemCtx/contextWindow →
         ├── tools (Tool 接口；zod schema → JSON Schema 暴露给模型)
         └── services (McpManager：按需连接 mcp_connect → 包装 mcp__server__tool 进池，同一权限管线；
                       HookManager：五类事件挂命令/HTTP，PreToolUse 可覆盖判定（engine deny 不可放行）；
-                      SkillRegistry + SkillTool：加载技能、allowed-tools 过滤；CommandRegistry：prompt/local 命令)
+                      SkillRegistry + SkillTool：加载技能、allowed-tools 过滤；CommandRegistry：prompt/local 命令；
+                      AgentRegistry：agent 工具委派（前台阻塞/后台任务）+ CORE_TEAM_TOOLS 协调者三件套；
+                      ExtractMemoriesEngine：REPL 轮末后台记忆提取双轨)
 ```
 
 - **动态工具池（V5 决策 B3）**：`RunQueryOptions.tools` 可为 `() => Tool[]`。query 每轮调用
@@ -105,7 +111,7 @@ cli (入口：参数 → 配置 → 会话文件 → systemCtx/contextWindow →
 | ------------------------ | --------------------------------------------------------------------------------- |
 | `src/services/hooks/`    | 新事件类型（Notification/SubagentStop 等）、hook 输出回喂模型（当前 Stop 仅注入） |
 | `src/services/skills/`   | SkillTool 子 agent 化 → V7（当前为主循环内注入 + allowed-tools 过滤近似）         |
-| `src/services/commands/` | local-jsx 形态（React/Ink 渲染）→ V8 TUI；local 命令输出自动回喂模型              |
+| `src/services/commands/` | local-jsx 形态（React/Ink 渲染）→ V9 TUI；local 命令输出自动回喂模型              |
 | `src/core/query.ts`      | catch 分支接 0.3.1 反应式压缩（prompt_too_long → 强制 compact）                   |
 | `src/core/compact.ts`    | 0.3.1 硬截断 `hardTruncateToFit` / 孤儿 tool 修复 `normalizeToolPairing`          |
 | `src/core/context.ts`    | managed 级记忆内容由后续版本填充；语义索引 → V5（repo_map 已随 0.4.1 落地）       |
@@ -113,6 +119,7 @@ cli (入口：参数 → 配置 → 会话文件 → systemCtx/contextWindow →
 | `src/providers/`         | 新适配器遵循同一 `LLMClient` 接口即可接入                                         |
 | `src/services/mcp/`      | 新 MCP 传输/能力（resources/prompts、preconnect 缓存）后续版本加入                |
 | `src/core/execute.ts`    | V7 任务级/后台并发（Agent 工具泛化）在 StreamingToolExecutor 之上叠加             |
-| `src/cli/repl.ts`        | session 切换 UI、TUI 从后续版本逐步加入                                           |
+| `src/cli/repl.ts`        | session 切换 UI（0.8.1 已落地 promptSelect 方向键菜单）；TUI 从 V9 逐步加入        |
 
-V4.5 交接见 [Plan_V4.5.md](Plan_V4.5.md)；M2 交接见 [Plan_V5.md](Plan_V5.md)；V6 交接见 [Plan_V6.md](Plan_V6.md)。
+V4.5 交接见 [Plan_V4.5.md](Plan_V4.5.md)；M2 交接见 [Plan_V5.md](Plan_V5.md)；V6 交接见 [Plan_V6.md](Plan_V6.md)；
+V7 交接见 [Plan_V7.md](Plan_V7.md)；V8 交接见 [Plan_V8.md](Plan_V8.md)。

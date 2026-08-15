@@ -364,7 +364,7 @@
 
 验证（**已完成，0.8.1**）：`sessionStorage.test.ts` 15 用例（sanitizePath/sessionsDir/meta 行/listSessions/
 findSessionFile）+ `keypress.test.ts` 12 用例 + `select.test.ts` 13 用例 + repl 粘贴/弹窗回归 ——
-typecheck + lint + **563 用例全绿**；待 CI 三 OS × Node 20/22/24 全绿 + 真实模型手动验证（需 key）。
+typecheck + lint + **560 用例全绿**（verify 工具移除后 52 文件）；待 CI 三 OS × Node 20/22/24 全绿 + 真实模型手动验证（需 key）。
 
 ---
 

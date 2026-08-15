@@ -341,7 +341,7 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **会话持久化**（0.8.1）：按项目分目录的 JSONL 追加、首行元数据、`--list` / `--resume <id>` / REPL `/sessions`
   切换（支持压缩边界续接、方向键菜单选择）
 
-V8 已交付 0.8.0（权限重构：`run_bash` 六分类 + 判定链收口前置单线，详见 [docs/permissions.md](docs/permissions.md)）；V9 待做：TUI、session 切换。Bug_V7.md 权限待修项归 V8 桶。
+V8 已交付 0.8.0（权限重构：`run_bash` 六分类 + 判定链收口前置单线，详见 [docs/permissions.md](docs/permissions.md)）；0.8.1（会话持久化 + 会话切换）已实现待发；V9 待做：TUI 等发布生态条目。Bug_V7.md 权限待修项归 V8 桶。
 
 ## 安全模型
 

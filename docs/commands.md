@@ -9,7 +9,7 @@
 - **用户级** `~/.config/run-agent/commands/<name>.md|.py|.js|.ts`——始终加载（用户自写）。
 - **项目级** `<cwd>/.run-agent/commands/<name>.md|.py|.js|.ts`——**仅 Trust 会话加载**。
 - 命令名 = 文件名去扩展名，须不含空白。同名去重：**用户级优先**。
-- `local-jsx` 形态（React/Ink 渲染）**不落地**，推 V8 TUI。
+- `local-jsx` 形态（React/Ink 渲染）**不落地**，推 V9 TUI。
 
 ## 两种形态
 

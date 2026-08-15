@@ -51,7 +51,7 @@ node dist/cli.js
 
 - **Hooks** 扩展点 `src/services/hooks/`：新事件类型、hook 输出回喂模型（当前仅 Stop 注入）。
 - **Skills** 扩展点 `src/services/skills/`：SkillTool 子 agent 化 → V7（当前主循环注入 + allowed-tools 过滤）。
-- **自定义命令** 扩展点 `src/services/commands/`：local-jsx 形态 → V8；local 输出自动回喂模型。
+- **自定义命令** 扩展点 `src/services/commands/`：local-jsx 形态 → V9；local 输出自动回喂模型。
 - 新工具实现 `Tool` 接口（`src/tools.ts`）即可接入，写类工具显式 `isConcurrencySafe: false`。
 
 ## CI
