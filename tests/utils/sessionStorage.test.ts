@@ -111,17 +111,27 @@ describe("sessionStorage（JSONL 会话）", () => {
   });
 
   it("V8① sanitizePath：非字母数字 → '-',字母数字保留", () => {
-    expect(sanitizePath("C:/My/Project")).toBe("C--My-Project");
-    expect(sanitizePath("F:\\MyClaudeCode\\run-agent")).toBe("F--MyClaudeCode-run-agent");
+    // 输入须为绝对路径（生产里传 process.cwd()）。path.resolve 保证两平台一致：
+    // POSIX 下 "C:/…" 是相对路径、会被拼上 cwd（CJ-01 实证：CI ubuntu/macos 失败）。
+    const p1 = path.resolve("My", "Project");
+    const s1 = sanitizePath(p1);
+    expect(s1).toBe(p1.replace(/[^a-zA-Z0-9]/g, "-"));
+    // 分隔符与盘符冒号等一律折叠成单个 '-'，字母数字保留
+    expect(s1).not.toContain("/");
+    expect(s1).not.toContain("\\");
+    expect(s1).not.toContain(":");
+
+    const p2 = path.resolve("MyClaudeCode", "run-agent");
+    expect(sanitizePath(p2)).toBe(p2.replace(/[^a-zA-Z0-9]/g, "-"));
   });
 
   it("V8① sanitizePath：超长路径截断 200 字符 + hash 后缀保唯一", () => {
-    const long = `C:/${"a".repeat(300)}/${"b".repeat(100)}`;
+    const long = path.resolve("/", "a".repeat(300), "b".repeat(100)); // 绝对路径，远超 200 字符
     const s = sanitizePath(long);
-    expect(s.length).toBeLessThanOrEqual(200 + 1 + 8);
+    expect(s.length).toBeLessThanOrEqual(200 + 1 + 8); // 200 截断 + '-' + 8 位 hash
     expect(s).toMatch(/-[0-9a-f]{8}$/);
-    expect(s.slice(0, 200)).toMatch(/^C--/); // 前 200 字符为截断部分
-    // 不同路径 → 不同目录名（截断后靠 hash 区分）
+    expect(s.slice(0, 200)).toMatch(/^[A-Za-z-]+$/); // 截断部分只含字母数字与连字符
+    // 不同路径 → 不同目录名（截断后靠 hash 区分：前缀相同，hash 不同）
     const s2 = sanitizePath(long + "/c");
     expect(s2).not.toBe(s);
   });

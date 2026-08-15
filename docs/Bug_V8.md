@@ -1,8 +1,8 @@
 # Bug 记录 · V8「系统能力完善」
 
-> 阶段：2026-08-13 ~ 2026-08-14 ｜ 交付：`0.8.0`（权限重构——run_bash 六分类 + 判定链收口前置单线）+ `0.8.1`（会话持久化 + 会话切换，已 commit `9945887` 未发版）。
+> 阶段：2026-08-13 ~ 2026-08-15 ｜ 交付：`0.8.0`（权限重构——run_bash 六分类 + 判定链收口前置单线）+ `0.8.1`（会话持久化 + 会话切换 + verify 移除，已发布 v0.8.1）。
 > 来源：会话记录、git 提交 `3909e1b`（0.8.0 CI 跨平台修复）/ `9945887`（0.8.1 主体）、CI 9 job 暴露、CHANGELOG [0.8.0]/[0.8.1]、Plan_V8.md §2。
-> **V8 共记录 4 个已解决 bug + 2 个待修开放项。** 集中在「跨平台 / REPL 交互 / 会话展示」三条线。
+> **V8 共记录 5 个已解决 bug + 2 个待修开放项。** 集中在「跨平台 / REPL 交互 / 会话展示」三条线。
 
 ## 总览
 
@@ -12,6 +12,7 @@
 | V8-2   | promptSelect 声明前引用后声明的 `rl` → TDZ ReferenceError，调用即抛                                     | 交互/UI      | 🟡 中  | ✅ 已解决       |
 | V8-3   | promptSelect 缺省 input 回退 `process.stdin`，漏听 REPL 注入流 → 嵌入场景菜单收不到按键                  | 交互/UI      | 🟠 高  | ✅ 已解决       |
 | V8-4   | 会话时间直接 slice 文件名字戳（UTC）→ `--list`/`/sessions` 显示偏早 8 小时                              | 会话/展示    | 🟡 中  | ✅ 已解决       |
+| V8-5   | sanitizePath 测试用 Windows 路径字面量 → POSIX 拼 cwd 断言失败（CI 6 job 挂，Windows 侥幸通过）           | 测试/跨平台  | 🟠 高  | ✅ 已解决       |
 | V8-P1  | REPL 兜底抛错无接盘：compact 兜底链 `throw e` 成 unhandledRejection → Node 20+ 默认 throw，REPL 崩溃    | 可靠性/REPL  | 🟠 高  | ⏳ 待修         |
 | V8-P2  | 子 Agent 权限统一分析：extractMemories 只读三件套无条件 allow，绕过主引擎路径危险段判定（理论漏洞面）    | 权限/子Agent | 🟡 中  | 🤔 待整理（非 hotfix） |
 
@@ -46,6 +47,15 @@
 - **根因**：展示层直接 slice 文件名字戳——`toISOString()` 输出的是 **UTC**，没有转本地时区。
 - **修复**：**存储保持 UTC**（文件名字戳字典序==时间序，排序不变式依赖它），展示改用 `sessionIdTime(id)`（`src/utils/sessionStorage.ts`）转**本地时区**（地区自适应，跟随系统时区），`--list`/`/sessions` 换用。
 - **教训**：存储格式与展示格式解耦——时间戳存储必须守恒（排序不变式），时区本地化只在显示层做，绝不在存储层转。
+
+### V8-5（高）sanitizePath 测试用 Windows 路径字面量 → POSIX 拼 cwd 断言失败
+
+- **现象**（CI 暴露）：0.8.1 CI **6 job 挂**（Linux/macOS × Node 20/22/24），Windows 3 job 过。`sessionStorage.test.ts` 两处断言失败：
+  - `sanitizePath("C:/My/Project")` 期望 `C--My-Project`，实际 `-home-runner-work-run-agent-run-agent-C--My-Project`（被拼上 runner cwd）；
+  - 超长截断测试 `s.slice(0, 200)` 期望 `/^C--/`，实际以 `-` 开头。
+- **根因**：测试把 `"C:/…"` 当「任何平台都是绝对路径」。`sanitizePath` 内部 `path.resolve(p)`——POSIX 下 `C:` 只是相对路径段，`resolve` 会拼上 `process.cwd()`；Windows 盘符开头是绝对路径、`resolve` 幂等 → **侥幸通过**。实现本身正确（生产永远传绝对 `process.cwd()`），错在测试的 Windows 假设。
+- **修复**（`tests/utils/sessionStorage.test.ts`，测试-only）：输入改 `path.resolve("My", "Project")` 派生绝对路径，期望用同一路径 `replace(/[^a-zA-Z0-9]/g, "-")` 计算；超长用例改 `path.resolve("/", "a".repeat(300), "b".repeat(100))`，截断断言改 `/^[A-Za-z-]+$/`（平台无关）。发布 0.8.1 后才发现（首次推批次到 CI），npm 包不受影响（测试不进 `files:["dist"]`）。
+- **教训**：与 V8-1 同族——测试里不能把 Windows 盘符路径当绝对路径喂给 `path.resolve`/`sessionsDir` 等解析函数。凡是路径入参，先 `path.resolve` 再断言，否则 POSIX 静默拼 cwd。
 
 ---
 
