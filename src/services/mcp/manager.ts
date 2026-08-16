@@ -1,7 +1,8 @@
 /**
  * V5 决策 B2/B3：MCP 连接管理器 + 状态机。
- * - 状态机 4 态：connected / failed / needs-auth / disabled。初始（从未连接）：failed + error "未连接"；
- *   enabled:false → disabled；连接成功 → connected；连接失败 → failed（带错误消息）；http/sse 401 → needs-auth。
+ * - 状态机 5 态：connected / failed / needs-auth / disabled / pending。初始（从未连接）：failed + error "未连接"；
+ *   enabled:false → disabled；连接发起即 pending（连接中）；成功 → connected；失败 → failed（带错误消息）；
+ *   http/sse 401 → needs-auth。
  * - connect(name) memoized：连接对象按 name 缓存；transport onclose 清缓存（下次自动重连）。
  * - 启动预连（V8 重设计①）：默认连接全部 enabled server；连接失败/401 进 failed/needs-auth，
  *   不阻断启动；/mcp connect <name> 手动重连（mcp_connect 工具已移除）。
@@ -20,7 +21,7 @@ import { normalizeNameForMCP, wrapMcpTool } from "./tool.js";
 import type { McpClientLike } from "./tool.js";
 import type { McpServerConfig } from "./config.js";
 
-export type McpServerStatus = "connected" | "failed" | "needs-auth" | "disabled";
+export type McpServerStatus = "connected" | "failed" | "needs-auth" | "disabled" | "pending";
 
 export interface McpServerStatusEntry {
   name: string;
@@ -164,8 +165,8 @@ export class McpManager {
   }
 
   /**
-   * 连接一个 server（memoized）：连接 → tools/list → 包装注册 → connected。
-   * 已在连接态直接返回既有工具。失败 → failed/needs-auth（带错误消息），返回 ok:false。
+   * 连接一个 server（memoized）：连接发起即置 pending（连接中）→ 连接 → tools/list → 包装注册 → connected。
+   * 已在连接态直接返回既有工具（不闪 pending）。失败 → failed/needs-auth（带错误消息），返回 ok:false。
    * @param transport 测试注入：覆盖按配置类型构建（InMemoryTransport 的 client 端）。
    */
   async connect(
@@ -185,6 +186,9 @@ export class McpManager {
         tools: [...this.tools.values()].filter((t) => t.name.startsWith(prefix)),
       };
     }
+
+    // 连接进行中 → pending：REPL 非阻塞预连下用户立刻 /mcp 看到的是「连接中」而非「未连接/failed」
+    this.statuses.set(name, { status: "pending" });
 
     let client: Client;
     let close: () => Promise<void>;

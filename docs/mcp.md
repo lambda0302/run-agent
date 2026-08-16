@@ -4,7 +4,7 @@ V5 里程碑 2。run-agent 通过 [`@modelcontextprotocol/sdk`](https://github.c
 
 设计目标（对齐 roadmap「接入标准协议生态」，但机制刻意简化）：
 
-- **启动预连**：启动即连接所有 enabled server、listTools 注册工具（REPL 非阻塞、headless 阻塞，见「启动预连」节）。连接失败/401 非致命，各自进 `failed`/`needs-auth` 态，可 `/mcp connect <name>` 手动重连。
+- **启动预连**：启动即连接所有 enabled server、listTools 注册工具（REPL 非阻塞、headless 阻塞，见「启动预连」节）。连接发起即 `pending`（/mcp 显示 ⏳ 连接中），成功/失败/401 各自进 `connected`/`failed`/`needs-auth` 态——失败非致命，可 `/mcp connect <name>` 手动重连。
 - **全量 schema**：连接时保留 server 的完整 JSON Schema，注入工具 spec 让模型看到真实入参结构（跳过 `{type:"object"}` 占位）；入参校验仍交给 server 自身。
 - **只连可信 server**：MCP 工具的参数是 server 内部黑盒，run-agent 不解析——信任边界必须诚实标注（见下）。
 
@@ -49,11 +49,12 @@ V5 里程碑 2。run-agent 通过 [`@modelcontextprotocol/sdk`](https://github.c
 | 状态         | 含义                                                          | 图标 |
 | ------------ | ------------------------------------------------------------- | ---- |
 | `connected`  | 已连接、工具已注册                                            | ✓    |
+| `pending`    | 连接中（REPL 非阻塞预连 / 手动 connect 正在进行中）           | ⏳   |
 | `failed`     | 连接失败（stdio spawn 失败 / http 连不上 / 超时），带错误消息 | ✗    |
 | `needs-auth` | http/sse 401（需补 token/重授权）                             | 🔑   |
 | `disabled`   | `enabled:false`                                               | ⛔   |
 
-初始（从未连接）= `failed` + "未连接"。连接 **memoized**：`onclose` 清缓存，server 断开后下次 `connect` 自动重连。
+初始（从未连接）= `failed` + "未连接"；连接发起即进 `pending`，成功/失败后各自落地 `connected` / `failed` / `needs-auth`。连接 **memoized**：`onclose` 清缓存，server 断开后下次 `connect` 自动重连。
 
 ## 启动预连
 

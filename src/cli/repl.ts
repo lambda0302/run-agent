@@ -618,6 +618,7 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
         }
         const icons: Record<string, string> = {
           connected: "✓",
+          pending: "⏳",
           failed: "✗",
           "needs-auth": "🔑",
           disabled: "⛔",

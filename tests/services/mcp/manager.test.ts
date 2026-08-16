@@ -195,6 +195,25 @@ describe("McpManager 非阻塞预连（connectAllInBackground）", () => {
     }
   }
 
+  it("连接进行中 → 状态 pending（而非 failed/未连接）；结束后落地终态", async () => {
+    const m = new McpManager({ slow: { type: "http", url: "https://example.com/mcp" } });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    // start 挂起直到 release：模拟慢连接，让 pending 窗口可观测
+    const gatedTransport: Transport = {
+      async start() { await gate; throw new Error("boom"); },
+      async send() {},
+      async close() {},
+    };
+    const p = m.connect("slow", gatedTransport);
+    // 连接已发起但未完成 → 立即可见 pending（REPL 启动后立刻 /mcp 看到的就是它）
+    expect(m.getStatuses()[0]!.status).toBe("pending");
+    release();
+    const res = await p;
+    expect(res.ok).toBe(false);
+    expect(m.getStatuses()[0]!.status).toBe("failed");
+  });
+
   it("同步返回（void），连接完成后工具进入池、状态 connected", async () => {
     // connectAllInBackground 不带 transport，走 transportOverrides（生产走配置构建的真实传输）
     const srv = await startMockServer([{ name: "echo" }]);
