@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.8.2**（Plan 模式完善：计划文件前置 + explore 引导 + planWasEdited + plan 专用提示词）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.8.3**（V8 批次：remember 写豁免 + /plan toggle + 动态上下文移入 messages + MCP 预连非阻塞化与连接 pending）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.8.2
+run-agent --version    # 应输出 0.8.3
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
@@ -341,7 +341,7 @@ server 用 `/mcp connect <name>` 手动重连（MCP 工具与内置工具走同�
 - **会话持久化**（0.8.1）：按项目分目录的 JSONL 追加、首行元数据、`--list` / `--resume <id>` / REPL `/sessions`
   切换（支持压缩边界续接、方向键菜单选择）
 
-V8 已交付 0.8.0（权限重构：`run_bash` 六分类 + 判定链收口前置单线，详见 [docs/permissions.md](docs/permissions.md)）；0.8.1（会话持久化 + 会话切换）已发布；0.8.2（Plan 模式完善：计划文件前置 + explore 引导 + planWasEdited + plan 专用提示词，详见 [docs/plan-mode.md](docs/plan-mode.md)）已实现待发；V9 待做：TUI 等发布生态条目。Bug_V7.md 权限待修项归 V8 桶。
+V8 已交付 0.8.0（权限重构：`run_bash` 六分类 + 判定链收口前置单线，详见 [docs/permissions.md](docs/permissions.md)）；0.8.1（会话持久化 + 会话切换）已发布；0.8.2（Plan 模式完善：计划文件前置 + explore 引导 + planWasEdited + plan 专用提示词，详见 [docs/plan-mode.md](docs/plan-mode.md)）已发布；0.8.3（V8 批次：remember 写豁免 + /plan toggle + 动态上下文移入 messages + MCP 预连非阻塞化与连接 pending）已发布；V9 待做：TUI 等发布生态条目。Bug_V7.md 权限待修项归 V8 桶。
 
 ## 安全模型
 

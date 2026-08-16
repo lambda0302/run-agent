@@ -30,7 +30,7 @@
   `/mcp connect <name>` 手动重连。连接时**保留 server 全量 JSON Schema** 注入工具 spec（模型可见真实
   入参结构，替换懒 `{type:"object"}` 占位），server 没给 schema 才回退 `z.record` 通配。
 
-## [Unreleased]
+## [0.8.3] - 2026-08-16
 
 ### Added
 
@@ -52,6 +52,11 @@
 - **extractMemories 权限收敛（V8-P2）**：提取子 agent 只读三件套（read_file/glob/grep）**不再无条件
   allow**，改走主引擎单线管线 `hasPermissionsToUseTool`——记忆豁免/路径危险段/cwd 边界/用户规则全
   生效；后台 ask→deny → 只读范围收敛为「记忆目录 + 项目内」。
+- **MCP 启动预连非阻塞化（REPL）**：REPL 启动预连改 fire-and-forget（`McpManager.connectAllInBackground`）——
+  提示符立即出现，不再被 30s 连接超时卡住；headless/one-shot 保留阻塞 `await`（单次运行首轮就要用工具）。
+  连接完成注册的工具经每轮重建的工具池在下一轮可用，`/mcp` 可查状态、`/mcp connect <name>` 手动重连。
+- **MCP 连接状态机加 `pending`**：连接发起即置 `pending`（`/mcp` 显示 ⏳ 连接中），成功/失败/401 各自落地
+  `connected`/`failed`/`needs-auth`——REPL 启动后立刻 `/mcp` 看到的是「连接中」而非「未连接」。
 
 ## [0.8.1] - 2026-08-15
 
