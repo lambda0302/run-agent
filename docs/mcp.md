@@ -103,8 +103,9 @@ MCP 工具的**参数是 server 内部黑盒**：run-agent 的 `inputPath` / `pa
 ## REPL 命令
 
 ```
-/mcp                列出已配置 server 与状态（✓ / ✗ / 🔑 / ⛔）
-/mcp connect <name> 手动连接/重连
+/mcp                    列出已配置 server 与状态（✓ / ⏳ / ✗ / 🔑 / ⛔）
+/mcp connect <name>     手动连接/重连（连接中显示 ⏳ pending）
+/mcp disconnect <name>  手动断开（清理工具 + 关闭传输，状态回「未连接」）
 ```
 
 ## 明确不做

@@ -166,6 +166,53 @@ describe("McpManager 连接集成", () => {
     }
   });
 
+  it("disconnect → 清理工具 + 关闭传输 + 状态回「未连接」；重复断开 ok:false；重连可再调", async () => {
+    const m = new McpManager({ mock: { type: "stdio", command: "x" } });
+    const srv1 = await startMockServer([{ name: "echo", handler: (a) => `v1:${String(a.x)}` }]);
+    try {
+      const r1 = await m.connect("mock", srv1.clientTransport);
+      expect(r1.ok).toBe(true);
+      expect(m.getConnectedTools().length).toBe(1);
+      expect(m.getStatuses()).toEqual([{ name: "mock", status: "connected" }]);
+
+      // 断开：工具清空、传输关闭、状态回初始「未连接」（/mcp 显示 ✗）
+      const d1 = await m.disconnect("mock");
+      expect(d1.ok).toBe(true);
+      expect(m.getConnectedTools().length).toBe(0);
+      expect(m.getStatuses()).toEqual([
+        { name: "mock", status: "failed", error: "未连接（/mcp connect <name> 重连）" },
+      ]);
+
+      // 已断开再断 → ok:false（不抛）
+      const d2 = await m.disconnect("mock");
+      expect(d2.ok).toBe(false);
+      if (!d2.ok) expect(d2.error).toContain("未连接");
+
+      // 断开后重连新 server（不同 in-memory 实例）→ 工具重新注册、可再调
+      const srv2 = await startMockServer([{ name: "echo", handler: (a) => `v2:${String(a.x)}` }]);
+      try {
+        const r2 = await m.connect("mock", srv2.clientTransport);
+        expect(r2.ok).toBe(true);
+        expect(m.getConnectedTools().length).toBe(1);
+        const echo = m.getConnectedTools().find((t) => t.name === "mcp__mock__echo")!;
+        expect((await echo.call({ x: "hi" })).result).toBe("v2:hi");
+      } finally {
+        await m.closeAll();
+        await srv2.close();
+      }
+    } finally {
+      await m.closeAll();
+      await srv1.close();
+    }
+  });
+
+  it("disconnect 未知 server → ok:false", async () => {
+    const m = new McpManager({ mock: { type: "stdio", command: "x" } });
+    const res = await m.disconnect("nope");
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("未知");
+  });
+
   it("tools/list 抛错 → failed（非连接阶段错误）", async () => {
     const m = new McpManager({ mock: { type: "stdio", command: "x" } });
     const srv = await startMockServer([{ name: "echo" }]);

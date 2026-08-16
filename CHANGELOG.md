@@ -2,33 +2,13 @@
 
 本文件遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [0.8.2] - 2026-08-16
+## [Unreleased]
 
 ### Added
 
-- **MCP 认证 `headers` + `${ENV_VAR}` 展开**（MCP 接入补强）：`mcp.json` 的 http/sse server 支持 `headers`
-  自定义请求头（认证等），值支持 `${ENV_VAR}` 运行时从进程环境展开——token 不落明文；未设置的环境变量
-  展开为空串（服务器 401 即暴露，走 `needs-auth` 态）。stdio 不需要：`env` 直接传给子进程。
-- **计划文件前置**（Plan 模式完善）：进入 plan 即定 `<cwd>/.run-agent/plans/plan-<ts>.md`，模型 plan 期间
-  用 `write_file`/`edit_file` 增量打磨；`exit_plan_mode` 入参 `plan` 变可选、缺省读盘。引擎新增「plan
-  文件写豁免」——精确文件（`write_file`/`edit_file`/`read_file`）+ 仅 plan 模式，收口在路径危险段之前
-  （`read_file` 豁免为设计偏差：段判定先于 plan 分支，不豁免则读不到计划文件；单测锁定 `plans/other.md`
-  仍 deny）。
-- **plan 期间 explore 引导**：`mode === "plan"` 时 system prompt 注入五段专用提示词（状态确认 + 只读
-  纪律 + explore 引导 + 计划文件路径 + 收束），引导模型用只读子 agent 探测而非乱用写工具被 deny。
-- **planWasEdited**：REPL 审批弹窗加「编辑后批准」——系统编辑器改计划文件，批准时检测内容变化经
-  `updatedInput` 传给工具，tool_result 标注「已批准计划（用户已编辑）」；编辑器 `$EDITOR`→`$VISUAL`→
-  Windows `notepad` 兜底。
-
-### Changed
-
-- **MCP 工具三模式一律 `ask`**（V8 决策）：MCP 工具参数是 server 内部黑盒，run-agent 不解析路径/命令——
-  default/acceptEdits/plan 三模式一律 ask，`readOnlyHint` 不再免确认（只影响并发调度）。default/acceptEdits
-  由 CLI 装配闭包落地（MCP 移除只读判定 → 兜底 ask），plan 由引擎层硬保证（`mcp__` 前缀判定先于只读分支）。
-- **MCP 连接模型重设计①**：默认**启动预连**所有 enabled server（配置驱动，删除 `preconnect` 字段与
-  `mcp_connect` 工具，连接改为纯配置动作）；连接失败/401 非致命，各自进 `failed`/`needs-auth` 态，
-  `/mcp connect <name>` 手动重连。连接时**保留 server 全量 JSON Schema** 注入工具 spec（模型可见真实
-  入参结构，替换懒 `{type:"object"}` 占位），server 没给 schema 才回退 `z.record` 通配。
+- **`/mcp disconnect <name>` 手动断开**（MCP 接入补强）：`McpManager.disconnect` 清理该 server 注册的
+  工具 + 关闭传输 + 状态回「未连接」（`/mcp` 显示 ✗，与从未连接一致）；未连接时 `ok:false` 提示可
+  `/mcp connect <name>` 重连。断开后可再 `/mcp connect <name>` 重新连接。
 
 ## [0.8.3] - 2026-08-16
 
@@ -57,6 +37,34 @@
   连接完成注册的工具经每轮重建的工具池在下一轮可用，`/mcp` 可查状态、`/mcp connect <name>` 手动重连。
 - **MCP 连接状态机加 `pending`**：连接发起即置 `pending`（`/mcp` 显示 ⏳ 连接中），成功/失败/401 各自落地
   `connected`/`failed`/`needs-auth`——REPL 启动后立刻 `/mcp` 看到的是「连接中」而非「未连接」。
+
+## [0.8.2] - 2026-08-16
+
+### Added
+
+- **MCP 认证 `headers` + `${ENV_VAR}` 展开**（MCP 接入补强）：`mcp.json` 的 http/sse server 支持 `headers`
+  自定义请求头（认证等），值支持 `${ENV_VAR}` 运行时从进程环境展开——token 不落明文；未设置的环境变量
+  展开为空串（服务器 401 即暴露，走 `needs-auth` 态）。stdio 不需要：`env` 直接传给子进程。
+- **计划文件前置**（Plan 模式完善）：进入 plan 即定 `<cwd>/.run-agent/plans/plan-<ts>.md`，模型 plan 期间
+  用 `write_file`/`edit_file` 增量打磨；`exit_plan_mode` 入参 `plan` 变可选、缺省读盘。引擎新增「plan
+  文件写豁免」——精确文件（`write_file`/`edit_file`/`read_file`）+ 仅 plan 模式，收口在路径危险段之前
+  （`read_file` 豁免为设计偏差：段判定先于 plan 分支，不豁免则读不到计划文件；单测锁定 `plans/other.md`
+  仍 deny）。
+- **plan 期间 explore 引导**：`mode === "plan"` 时 system prompt 注入五段专用提示词（状态确认 + 只读
+  纪律 + explore 引导 + 计划文件路径 + 收束），引导模型用只读子 agent 探测而非乱用写工具被 deny。
+- **planWasEdited**：REPL 审批弹窗加「编辑后批准」——系统编辑器改计划文件，批准时检测内容变化经
+  `updatedInput` 传给工具，tool_result 标注「已批准计划（用户已编辑）」；编辑器 `$EDITOR`→`$VISUAL`→
+  Windows `notepad` 兜底。
+
+### Changed
+
+- **MCP 工具三模式一律 `ask`**（V8 决策）：MCP 工具参数是 server 内部黑盒，run-agent 不解析路径/命令——
+  default/acceptEdits/plan 三模式一律 ask，`readOnlyHint` 不再免确认（只影响并发调度）。default/acceptEdits
+  由 CLI 装配闭包落地（MCP 移除只读判定 → 兜底 ask），plan 由引擎层硬保证（`mcp__` 前缀判定先于只读分支）。
+- **MCP 连接模型重设计①**：默认**启动预连**所有 enabled server（配置驱动，删除 `preconnect` 字段与
+  `mcp_connect` 工具，连接改为纯配置动作）；连接失败/401 非致命，各自进 `failed`/`needs-auth` 态，
+  `/mcp connect <name>` 手动重连。连接时**保留 server 全量 JSON Schema** 注入工具 spec（模型可见真实
+  入参结构，替换懒 `{type:"object"}` 占位），server 没给 schema 才回退 `z.record` 通配。
 
 ## [0.8.1] - 2026-08-15
 

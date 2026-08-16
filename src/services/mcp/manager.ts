@@ -250,6 +250,25 @@ export class McpManager {
     }
   }
 
+  /**
+   * 手动断开一个 server（/mcp disconnect <name>）：清理注册工具 + 连接 + 关闭传输（幂等）。
+   * 状态回到 failed + "未连接"（与从未连接一致，`/mcp` 显示 ✗ 未连接）；未连接时返回 ok:false。
+   */
+  async disconnect(name: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const cfg = this.servers[name];
+    if (!cfg) return { ok: false, error: `未知 MCP server: ${name}（/mcp 查看已配置）` };
+    const conn = this.connections.get(name);
+    if (!conn) return { ok: false, error: `MCP server ${name} 未连接（/mcp connect ${name} 重连）` };
+    this.forgetServer(name);
+    this.statuses.set(name, { status: "failed", error: "未连接（/mcp connect <name> 重连）" });
+    try {
+      await conn.close();
+    } catch {
+      // 关闭失败静默（子进程可能已退出）
+    }
+    return { ok: true };
+  }
+
   /** 关闭并清理所有连接（进程退出时调用；幂等）。 */
   async closeAll(): Promise<void> {
     for (const name of [...this.connections.keys()]) {

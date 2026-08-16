@@ -335,7 +335,7 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<Ru
 
 const HELP = [
   "run-agent REPL — 直接输入 prompt 开始，agent 会读/写/改/搜/执行并汇报。",
-  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入/退出只读计划模式 · /mcp 查看/连接 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /tasks 查看后台子 agent · /sessions 查看/切入历史会话 · /help 帮助 · /exit 退出",
+  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入/退出只读计划模式 · /mcp 查看/连接/断开 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /tasks 查看后台子 agent · /sessions 查看/切入历史会话 · /help 帮助 · /exit 退出",
 ].join("\n");
 
 /** V6 决策 B3/C2：内置斜杠命令集合——技能/自定义命令与内置冲突时内置优先。 */
@@ -607,6 +607,23 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
             return;
           }
           out.write(`✓ 已连接 ${server}，注册 ${res.tools.length} 个工具\n`);
+          promptLine();
+          return;
+        }
+        if (input.startsWith("/mcp disconnect ")) {
+          const server = input.slice("/mcp disconnect ".length).trim();
+          if (!server) {
+            out.write("用法: /mcp disconnect <server>\n");
+            promptLine();
+            return;
+          }
+          const res = await mgr.disconnect(server);
+          if (!res.ok) {
+            out.write(`✗ ${res.error}\n`);
+            promptLine();
+            return;
+          }
+          out.write(`已断开 ${server}\n`);
           promptLine();
           return;
         }

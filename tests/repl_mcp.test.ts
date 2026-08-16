@@ -111,7 +111,7 @@ describe("REPL /mcp（V5 决策 B2）", () => {
     }
   });
 
-  it("/mcp connect 未知 server → 错误提示（✗）", async () => {
+  it("/mcp disconnect 未知 server → 错误提示（✗）", async () => {
     const m = new McpManager({});
     const out = await runReplLines(
       {
@@ -120,9 +120,34 @@ describe("REPL /mcp（V5 决策 B2）", () => {
         sessionFile: path.join(tempDir(), "s.jsonl"),
         mcpManager: m,
       },
-      ["/mcp connect nope", "/exit"],
+      ["/mcp disconnect nope", "/exit"],
     );
     expect(out).toContain("✗");
     expect(out).toContain("未知");
+  });
+
+  it("/mcp disconnect <name> 断开已连接 server → 状态回「未连接」", async () => {
+    const srv = await startMockServer([{ name: "echo" }]);
+    const cfg: Record<string, McpServerConfig> = { mock: { type: "stdio", command: "x" } };
+    const m2 = new McpManager(cfg, { mock: srv.clientTransport });
+    try {
+      const out = await runReplLines(
+        {
+          client: throwClient,
+          tools: [],
+          sessionFile: path.join(tempDir(), "s.jsonl"),
+          mcpManager: m2,
+        },
+        ["/mcp connect mock", "/mcp disconnect mock", "/mcp", "/exit"],
+      );
+      expect(out).toContain("✓ 已连接 mock，注册 1 个工具");
+      expect(out).toContain("已断开 mock");
+      // 断开后 /mcp 列出 → 状态回 failed(未连接)（与从未连接一致）
+      expect(out).toContain("✗ mock (failed)");
+      expect(out).toContain("未连接");
+    } finally {
+      await m2.closeAll();
+      await srv.close();
+    }
   });
 });
