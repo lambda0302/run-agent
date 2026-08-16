@@ -309,7 +309,7 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 }
 ```
 
-配置后启动即预连：MCP 工具（`mcp__filesystem__read_file` 等）第一轮即可被模型调用；连接失败的
+配置后启动预连：REPL 非阻塞预连（提示符立即出现，工具连上后可用）、headless 阻塞预连（首轮即有）；MCP 工具（`mcp__filesystem__read_file` 等）经每轮工具池重建动态可用；连接失败的
 server 用 `/mcp connect <name>` 手动重连（MCP 工具与内置工具走同一权限管线）。详见 [docs/mcp.md](docs/mcp.md)。
 
 ## 特性
@@ -325,7 +325,7 @@ server 用 `/mcp connect <name>` 手动重连（MCP 工具与内置工具走同�
 - **超大工具结果指针化**（V3）：超阈值结果落盘、消息里只留指针，模型需要时自己 `read_file`
 - **权限审批引擎**（V2 / 0.4.2 / V8）：`default` / `acceptEdits` 两档模式（bypass 已删除）+ **Plan 模式**（0.5.0，强制只读），危险目录黑名单 + 工作目录白名单 + 记忆读专属通道三层模型，**`run_bash` 六分类影响半径**（readonly 自动放行 / dangerous 硬拒 / 其余询问，判定链收口前置单线），内置危险命令与敏感路径底线，支持全局 + 项目级规则
 - **Plan 模式**（0.5.0）：复杂任务先只读探索、再出计划、经你批准才动手——`enter_plan_mode` 进入强制只读（写/执行/非只读 MCP 工具一律 deny），`exit_plan_mode` 呈现计划并弹窗审批（计划落盘 `.run-agent/plans/`），批准后自动恢复执行权限；也可直接 `/plan` 手动进入
-- **MCP 接入**（0.5.0）：接入标准协议生态（stdio / HTTP / SSE），配置 `mcp.json` 启动即预连所有 enabled server（连接失败可 `/mcp connect <server>` 重连），MCP 工具（`mcp__server__tool`）与内置工具走同一权限管线；详见 [docs/mcp.md](docs/mcp.md)
+- **MCP 接入**（0.5.0）：接入标准协议生态（stdio / HTTP / SSE），配置 `mcp.json` 启动即预连所有 enabled server（REPL 非阻塞、headless 阻塞；连接失败可 `/mcp connect <server>` 重连），MCP 工具（`mcp__server__tool`）与内置工具走同一权限管线；详见 [docs/mcp.md](docs/mcp.md)
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json` / `.run-agent/mcp.json`，防提示注入
 - **流式即时执行**（0.5.0）：工具边流式边并行执行（不必等响应完结），只读并行（上限 10）/ 写串行、结果按原顺序回填
 - **16 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `agent`（委派子任务）· `send_message` / `task_stop`（协调者三件套）· `enter_plan_mode` / `exit_plan_mode`（Plan 导航）· `SkillTool`（V6，加载技能）+ 配置 MCP 时的动态 MCP 工具

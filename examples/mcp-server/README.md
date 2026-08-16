@@ -36,7 +36,7 @@ node examples/mcp-server/index.js
      ✓ demo (connected) — 已连接，注册 2 个工具
    ```
 
-3. 直接让模型调 `mcp__demo__echo` / `mcp__demo__timestamp`（第一轮起可用）。
+3. 直接让模型调 `mcp__demo__echo` / `mcp__demo__timestamp`（连接完成后可用；本地 stdio 连得快，通常首轮即有）。
 
    若连接失败（server 未起来等），进 `failed` 态不阻断启动，用 `/mcp connect demo` 手动重连。
 

@@ -210,7 +210,7 @@ export interface SystemContext {
    *  runTurn 每轮同步至此）。plan 模式下注入，引导模型用 write_file/edit_file 增量打磨该文件。 */
   planFilePath?: string;
   /** V5 决策 B3：已配置的 MCP server 摘要（如 "filesystem(stdio), github(http)"）；
-   *  非空时动态段注入「启动即连接、工具可直接调用」引导（V8 重设计①：默认预连）。 */
+   *  非空时动态段注入「启动后台预连、连接完成后可调用」引导（V8 重设计①：默认预连）。 */
   mcpServers?: string;
   /** V6 决策 E2：可用技能清单（名 + description，一行一个）。非空时动态段注入，
    *  让模型知道可调 SkillTool；技能 body 只在调用时加载（不塞 token）。 */
@@ -260,7 +260,7 @@ function formatDynamic(
   }
   if (ctx.mcpServers) {
     bits.push(
-      `MCP servers 已配置: ${ctx.mcpServers} — 启动即连接，其工具可直接以 mcp__<server>__<tool> 调用（连接失败的 server 可让用户用 /mcp 查看并用 /mcp connect 重连）`,
+      `MCP servers 已配置: ${ctx.mcpServers} — 启动后台预连，连接完成后其工具可直接以 mcp__<server>__<tool> 调用（连接失败的 server 可让用户用 /mcp 查看并用 /mcp connect 重连）`,
     );
   }
   if (ctx.skills) {

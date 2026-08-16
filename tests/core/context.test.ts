@@ -327,7 +327,7 @@ describe("buildDynamicContext（V8.3 动态上下文组装——每轮插入 mes
     expect(without).not.toContain("可用技能");
   });
 
-  it("V5 决策 B3：mcpServers 非空时注入启动即连接引导；缺省不注入", async () => {
+  it("V5 决策 B3：mcpServers 非空时注入启动后台预连引导；缺省不注入", async () => {
     const { cwd } = makeHome();
     const withMcp = await buildDynamicContext(
       { cwd, isTrusted: false, bare: false, mcpServers: "filesystem(stdio), github(http)" },

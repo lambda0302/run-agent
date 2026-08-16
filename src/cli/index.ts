@@ -302,7 +302,15 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
   let mcpManager: McpManager | undefined;
   if (Object.keys(mcpConfig.servers).length > 0) {
     mcpManager = new McpManager(mcpConfig.servers);
-    await Promise.all(mcpManager.serverNames().map((name) => mcpManager!.connect(name)));
+    // 预连策略按运行形态分流（2026-08-16）：
+    //   headless/one-shot（--print/位置参数）→ 阻塞 await：单次运行首轮就要用工具，等不起下一轮。
+    //   REPL → 非阻塞 connectAllInBackground：提示符立即出现，不被 30s 连接超时卡住；
+    //           工具连上后经每轮重建的工具池（getConnectedTools）在下一轮可用，/mcp 可查状态重连。
+    if (opts.print ?? prompt) {
+      await Promise.all(mcpManager.serverNames().map((name) => mcpManager!.connect(name)));
+    } else {
+      mcpManager.connectAllInBackground();
+    }
     // 进程退出清理所有子进程/连接（fire-and-forget；stdio transport 内部有 SIGINT→SIGTERM→SIGKILL 升级）
     process.on("exit", () => {
       void mcpManager?.closeAll();

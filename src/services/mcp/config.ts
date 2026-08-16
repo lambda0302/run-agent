@@ -27,7 +27,7 @@ export interface McpServerConfig {
 }
 
 export interface McpConfig {
-  /** V8 重设计①：启动即连接全部 enabled server（配置驱动；无开关——enabled:false = 禁用不连）。 */
+  /** V8 重设计①：启动预连全部 enabled server（REPL 非阻塞、headless 阻塞，见 cli/index.ts；无开关——enabled:false = 禁用不连）。 */
   servers: Record<string, McpServerConfig>;
 }
 

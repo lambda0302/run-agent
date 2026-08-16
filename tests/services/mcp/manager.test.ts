@@ -185,6 +185,48 @@ describe("McpManager 连接集成", () => {
   });
 });
 
+describe("McpManager 非阻塞预连（connectAllInBackground）", () => {
+  /** 轮询直到条件成立（CI 慢机上比固定 setTimeout 可靠）。 */
+  async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+    const start = Date.now();
+    while (!cond()) {
+      if (Date.now() - start > timeoutMs) throw new Error("waitFor 超时");
+      await new Promise((r) => setTimeout(r, 10));
+    }
+  }
+
+  it("同步返回（void），连接完成后工具进入池、状态 connected", async () => {
+    // connectAllInBackground 不带 transport，走 transportOverrides（生产走配置构建的真实传输）
+    const srv = await startMockServer([{ name: "echo" }]);
+    const m = new McpManager({ mock: { type: "stdio", command: "x" } }, { mock: srv.clientTransport });
+    try {
+      // 不 await、不阻塞——调用即刻返回
+      m.connectAllInBackground();
+      await waitFor(() => m.getStatuses()[0]!.status === "connected");
+      expect(m.getConnectedTools().length).toBe(1);
+      expect(m.getConnectedTools()[0]!.name).toBe("mcp__mock__echo");
+    } finally {
+      await m.closeAll();
+      await srv.close();
+    }
+  });
+
+  it("连接失败不抛（fire-and-forget），状态进 failed", async () => {
+    const m = new McpManager({
+      broken: { type: "stdio", command: "definitely-not-a-real-command-run-agent-test" },
+    });
+    expect(() => m.connectAllInBackground()).not.toThrow();
+    await waitFor(() => m.getStatuses()[0]!.status === "failed");
+  });
+
+  it("enabled:false 的 server 跳过（不连接）", async () => {
+    const m = new McpManager({ off: { type: "stdio", command: "x", enabled: false } });
+    m.connectAllInBackground();
+    // 禁用 server 同步返回 disabled，无异步连接
+    expect(m.getStatuses()).toEqual([{ name: "off", status: "disabled" }]);
+  });
+});
+
 describe("requestInitFor（http/sse 认证 headers + ${ENV_VAR} 展开）", () => {
   it("无 headers → 空选项（SDK 走默认）", () => {
     expect(requestInitFor({ type: "http", url: "https://x/mcp" })).toEqual({});

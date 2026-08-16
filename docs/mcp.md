@@ -4,7 +4,7 @@ V5 里程碑 2。run-agent 通过 [`@modelcontextprotocol/sdk`](https://github.c
 
 设计目标（对齐 roadmap「接入标准协议生态」，但机制刻意简化）：
 
-- **启动预连**：启动即连接所有 enabled server、listTools 注册工具，第一轮起模型即可调用。连接失败/401 非致命，各自进 `failed`/`needs-auth` 态，可 `/mcp connect <name>` 手动重连。
+- **启动预连**：启动即连接所有 enabled server、listTools 注册工具（REPL 非阻塞、headless 阻塞，见「启动预连」节）。连接失败/401 非致命，各自进 `failed`/`needs-auth` 态，可 `/mcp connect <name>` 手动重连。
 - **全量 schema**：连接时保留 server 的完整 JSON Schema，注入工具 spec 让模型看到真实入参结构（跳过 `{type:"object"}` 占位）；入参校验仍交给 server 自身。
 - **只连可信 server**：MCP 工具的参数是 server 内部黑盒，run-agent 不解析——信任边界必须诚实标注（见下）。
 
@@ -38,7 +38,7 @@ V5 里程碑 2。run-agent 通过 [`@modelcontextprotocol/sdk`](https://github.c
 - `type`：`stdio` | `http`（Streamable HTTP）| `sse`。
 - `headers`（仅 http/sse）：自定义请求头（认证等），值支持 **`${ENV_VAR}` 展开**——token 不落明文，运行时从进程环境取；未设置的环境变量展开为空串（服务器 401 即暴露，走 `needs-auth` 态）。stdio 不需要：`env` 直接传给子进程。
 - `enabled: false` → **disabled** 态：不连接、不注入工具、`/mcp` 显示 ⛔。
-- 启动即预连所有 `enabled` server（配置驱动，无需额外字段）；连接失败/401 各自进 `failed`/`needs-auth` 态，不阻断启动，可 `/mcp connect <name>` 手动重连。
+- 启动即预连所有 `enabled` server（配置驱动，无需额外字段；REPL 非阻塞、headless 阻塞，见「启动预连」）；连接失败/401 各自进 `failed`/`needs-auth` 态，不阻断启动，可 `/mcp connect <name>` 手动重连。
 
 > 为什么放 `.run-agent/`：项目级私有配置目录已在那里（记忆同址）；配置是用户写的，agent 工具读不到（`.run-agent` 段内置 deny）。
 
@@ -57,8 +57,14 @@ V5 里程碑 2。run-agent 通过 [`@modelcontextprotocol/sdk`](https://github.c
 
 ## 启动预连
 
-- 启动即连接所有 `enabled` server（配置驱动，无手动/按需模式）。动态上下文块注入一行（V8.3 起在 messages、随每轮用户 query 前插入，不再进 system）：`MCP servers 已配置: filesystem(stdio), github(http) — 启动即连接，其工具可直接以 mcp__<server>__<tool> 调用（连接失败的 server 可让用户用 /mcp 查看并用 /mcp connect 重连）`。
-- 连接成功 → `tools/list` → 每个工具包装成标准 `Tool` 注册进池，**第一轮起**模型即可调用 `mcp__<server>__<tool>`（工具列表每轮从池里重建，天然动态）。
+预连策略按运行形态分流（2026-08-16）：
+
+- **REPL（交互）**：非阻塞预连——`connectAllInBackground()` 并发发起全部连接、不等结果，提示符立即出现（不被 30s 连接超时卡住）；工具连上后随下一轮工具池重建进入调用面。
+- **headless/one-shot（`--print`/位置参数）**：阻塞 `await` 全部连接——单次运行首轮就要用工具，等不起下一轮。
+
+动态上下文块注入一行（V8.3 起在 messages、随每轮用户 query 前插入，不再进 system）：`MCP servers 已配置: filesystem(stdio), github(http) — 启动后台预连，连接完成后其工具可直接以 mcp__<server>__<tool> 调用（连接失败的 server 可让用户用 /mcp 查看并用 /mcp connect 重连）`。
+
+- 连接成功 → `tools/list` → 每个工具包装成标准 `Tool` 注册进池，即可调用 `mcp__<server>__<tool>`（工具列表每轮从池里重建，天然动态；headless 首轮即有，REPL 在连接完成后的下一轮）。
 - 连接失败/401 **不阻断启动**：各自进 `failed`/`needs-auth` 态；用户可 `/mcp connect <name>` 手动重连。
 - 连接是配置动作：用户写好配置 = 已授权；项目级配置仅 Trust 加载是第二道门。连接不是逐次工具调用，无需单独的工具级权限。
 
@@ -121,9 +127,9 @@ EOF
 # 3. 进 REPL
 run-agent
 
-# 4. 调用（demo 启动时已预连）
+# 4. 调用（demo 启动后台预连；本地 stdio 连得快，通常首个 /mcp 即已连接）
 > /mcp            # 应看到 demo ✓ 已连接，注册 2 个工具
-> 让模型调 mcp__demo__echo / mcp__demo__timestamp（第一轮起即可）
+> 让模型调 mcp__demo__echo / mcp__demo__timestamp（连接完成后即可）
 ```
 
 详见 [examples/mcp-server/README](../examples/mcp-server/README.md)。

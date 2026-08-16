@@ -235,6 +235,17 @@ export class McpManager {
     }
   }
 
+  /**
+   * 非阻塞预连（REPL 启动用）：并发发起全部 enabled server 的连接，不等待结果。
+   * connect() 内部捕获所有错误（失败进 failed/needs-auth 态、返回 ok:false），.catch 仅防御性兜底；
+   * 连接完成注册的工具在下一轮 getConnectedTools() 拾取（工具池每轮重建）。
+   */
+  connectAllInBackground(): void {
+    for (const name of this.serverNames()) {
+      void this.connect(name).catch(() => {});
+    }
+  }
+
   /** 关闭并清理所有连接（进程退出时调用；幂等）。 */
   async closeAll(): Promise<void> {
     for (const name of [...this.connections.keys()]) {
