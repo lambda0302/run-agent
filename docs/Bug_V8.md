@@ -2,7 +2,7 @@
 
 > 阶段：2026-08-13 ~ 2026-08-15 ｜ 交付：`0.8.0`（权限重构——run_bash 六分类 + 判定链收口前置单线）+ `0.8.1`（会话持久化 + 会话切换 + verify 移除，已发布 v0.8.1）。
 > 来源：会话记录、git 提交 `3909e1b`（0.8.0 CI 跨平台修复）/ `9945887`（0.8.1 主体）、CI 9 job 暴露、CHANGELOG [0.8.0]/[0.8.1]、Plan_V8.md §2。
-> **V8 共记录 6 个已解决 bug + 1 个待修开放项。** 集中在「跨平台 / REPL 交互 / 会话展示 / 子 Agent 权限」四条线。
+> **V8 共记录 7 个已解决 bug + 1 个待修开放项。** 集中在「跨平台 / REPL 交互 / 会话展示 / 子 Agent 权限 / 测试契约」五条线。
 
 ## 总览
 
@@ -14,7 +14,8 @@
 | V8-4   | 会话时间直接 slice 文件名字戳（UTC）→ `--list`/`/sessions` 显示偏早 8 小时                              | 会话/展示    | 🟡 中  | ✅ 已解决       |
 | V8-5   | sanitizePath 测试用 Windows 路径字面量 → POSIX 拼 cwd 断言失败（CI 6 job 挂，Windows 侥幸通过）           | 测试/跨平台  | 🟠 高  | ✅ 已解决       |
 | V8-P1  | REPL 兜底抛错无接盘：compact 兜底链 `throw e` 成 unhandledRejection → Node 20+ 默认 throw，REPL 崩溃    | 可靠性/REPL  | 🟠 高  | ⏳ 待修         |
-| V8-P2  | extractMemories 只读三件套无条件 allow，绕过主引擎路径危险段判定 → 改走主引擎管线（记忆豁免/cwd 内可读） | 权限/子Agent | 🟡 中  | ✅ 已解决（2026-08-16，待 commit） |
+| V8-6   | headless JSON 契约测试未同步 V8.3 动态上下文移入 messages（消息数 4→5，CI 9 job 全挂）                    | 测试/契约    | 🟡 中  | ✅ 已解决（2026-08-16）              |
+| V8-P2  | extractMemories 只读三件套无条件 allow，绕过主引擎路径危险段判定 → 改走主引擎管线（记忆豁免/cwd 内可读） | 权限/子Agent | 🟡 中  | ✅ 已解决（67aed8a）                 |
 
 ---
 
@@ -56,6 +57,12 @@
 - **根因**：测试把 `"C:/…"` 当「任何平台都是绝对路径」。`sanitizePath` 内部 `path.resolve(p)`——POSIX 下 `C:` 只是相对路径段，`resolve` 会拼上 `process.cwd()`；Windows 盘符开头是绝对路径、`resolve` 幂等 → **侥幸通过**。实现本身正确（生产永远传绝对 `process.cwd()`），错在测试的 Windows 假设。
 - **修复**（`tests/utils/sessionStorage.test.ts`，测试-only）：输入改 `path.resolve("My", "Project")` 派生绝对路径，期望用同一路径 `replace(/[^a-zA-Z0-9]/g, "-")` 计算；超长用例改 `path.resolve("/", "a".repeat(300), "b".repeat(100))`，截断断言改 `/^[A-Za-z-]+$/`（平台无关）。发布 0.8.1 后才发现（首次推批次到 CI），npm 包不受影响（测试不进 `files:["dist"]`）。
 - **教训**：与 V8-1 同族——测试里不能把 Windows 盘符路径当绝对路径喂给 `path.resolve`/`sessionsDir` 等解析函数。凡是路径入参，先 `path.resolve` 再断言，否则 POSIX 静默拼 cwd。
+
+### V8-6（中）headless JSON 契约测试未同步 V8.3 动态上下文移入 messages
+
+- **现象**（CI 暴露）：V8.3 批次 push 后 CI **9 job 全挂**——`tests/cli/headless.test.ts` 断言 `json.messages === 4`，实际 5。
+- **根因**：V8.3 把时间戳等动态上下文从 system 移入 messages，headless（`--print`）走 `runOneShot` 同样每轮插一条动态上下文 user 消息（`DYNAMIC_CONTEXT_MARKER` 前缀）。`json.messages = result.messages.length` 因此从 4 变 5（dynamic(user) + user + assistant(tool_use) + tool + assistant(text)）。**本地漏测**：headless 测试跑 `dist/cli.js`（`test` 脚本先 build），本地 `npx vitest run` 不重建 dist，跑的是旧产物——CI 的 `npm test` 先 build 才暴露。
+- **修复**（`tests/cli/headless.test.ts`，2026-08-16）：断言改 5 + 注释更新。**教训**：改 `runOneShot`/消息装配相关行为后，本地验证必须 `npm run build` 再跑 headless 测试（或直接 `npm test`），不能只跑 `npx vitest run`。
 
 ### V8-P2（中）extractMemories 只读三件套无条件 allow → 改走主引擎管线
 

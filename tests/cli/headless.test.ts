@@ -93,7 +93,7 @@ describe("M4 headless（--print + --json 契约）", () => {
     expect(json.model).toBe("gpt-4o-mini"); // 未显式指定 → 适配器默认
     expect(json.session).toMatch(/\.jsonl$/);
     expect(json.reply).toBe("final-answer");
-    expect(json.messages).toBe(4); // user + assistant(tool_use) + tool + assistant(text)
+    expect(json.messages).toBe(5); // dynamic(user) + user + assistant(tool_use) + tool + assistant(text)
     expect(json.turns).toBe(2);
     expect(json.tools).toHaveLength(1);
     expect(json.tools[0]).toMatchObject({
