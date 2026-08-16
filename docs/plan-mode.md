@@ -60,7 +60,7 @@ plan 是**强制只读**态，判定优先级高于用户模式与用户规则�
 
 - `enter_plan_mode` / `exit_plan_mode` 由 `src/tools/plan_mode.ts` 的 `makePlanTools` 工厂装配，注入 `getMode` / `setMode`（repl 闭包读写 `ctx.mode`）；`prePlanMode` 存工厂闭包（单会话单实例）。
 - `/plan` 命令调用同一工厂暴露的 `enterPlanManually()`——与 `enter_plan_mode` 共用 `prePlanMode`，两条进入路径行为完全一致。
-- 判定在 `src/permissions/engine.ts` 的 plan 分支（危险命令检查之后、其余判定之前）；只读判定经 `hasPermissionsToUseTool` 第 7 参 `readOnlyNames`（缺省 = 内置只读集，REPL 并入 explore 与 MCP 只读 hint）。
+- 判定在 `src/permissions/engine.ts` 的 plan 分支（危险命令检查之后、其余判定之前）；只读判定经 `hasPermissionsToUseTool` 第 7 参 `readOnlyNames`（缺省 = 内置只读集，REPL 并入 explore——不含 MCP，V8 起 MCP 外部工具 plan 下也 ask，先于只读判定）。
 - **计划文件豁免（0.8.2）**：`hasPermissionsToUseTool` 第 8 参 `planFilePath`（`PermissionContext.planFilePath`）；豁免步骤 4.5 在记忆豁免之后、路径危险段之前——精确文件 + `mode === "plan"` + `write_file`/`edit_file`/`read_file` 三工具放行，同目录其它文件照旧段 deny。
 - **装配链（0.8.2）**：`makePlanTools` 的 `onEnter(planFilePath)` 回调 → `cli/index.ts` 写入 `ctx.planFilePath` → `makeCheckPermission` 每判定传 engine（实时读 ctx，模型轮内进入 plan 也生效）→ `repl.ts` 每轮 `runTurn` 把 `ctx.mode`/`ctx.planFilePath` 同步进 `systemCtx` → `context.ts` 动态段在 `mode === "plan"` 注入 plan 专用提示词段（状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束）。
 - **编辑后批准（0.8.2）**：`resolveAsk` 返回 `PermissionCheckResult`（可含 `updatedInput`），exit 弹窗菜单 `EXIT_OPTIONS` 四项；`execute.ts` 在 allow 且携带 updatedInput 时并入 `item.input` 再走工具（重新 zod 校验）；编辑器经 `openSystemEditor`（`src/utils/editor.ts`）注入，测试用 fake。

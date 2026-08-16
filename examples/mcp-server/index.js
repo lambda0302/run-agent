@@ -2,8 +2,8 @@
 /**
  * run-agent MCP 示例 server（最小 stdio server，供本地验证，无真实 I/O 副作用）。
  *
- * 用途：验证 run-agent 的按需连接端到端链路——
- *   配置 mcp.json → /mcp connect demo → 模型调 mcp__demo__echo / mcp__demo__timestamp
+ * 用途：验证 run-agent 的 MCP 接入端到端链路——
+ *   配置 mcp.json → 启动预连 demo → 模型调 mcp__demo__echo / mcp__demo__timestamp
  *
  * 运行（仓库根目录，node_modules 已装 SDK）：
  *   node examples/mcp-server/index.js

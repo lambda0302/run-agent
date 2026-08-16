@@ -3,7 +3,8 @@
  * - 状态机 4 态：connected / failed / needs-auth / disabled。初始（从未连接）：failed + error "未连接"；
  *   enabled:false → disabled；连接成功 → connected；连接失败 → failed（带错误消息）；http/sse 401 → needs-auth。
  * - connect(name) memoized：连接对象按 name 缓存；transport onclose 清缓存（下次自动重连）。
- * - 按需连接：默认不预连、不 spawn、不 listTools；mcp_connect 工具触发连接。
+ * - 启动预连（V8 重设计①）：默认连接全部 enabled server；连接失败/401 进 failed/needs-auth，
+ *   不阻断启动；/mcp connect <name> 手动重连（mcp_connect 工具已移除）。
  * - connect 可选注入 transport（测试用 InMemoryTransport 的 client 端）；缺省按配置类型构建：
  *   stdio（StdioClientTransport，stderr pipe）/ http（StreamableHTTPClientTransport，fetch 60s 超时）/ sse。
  * - 连接的 MCP 工具注册进 tools 池（mcp__server__tool），每轮 buildTools ++ getConnectedTools() 动态注入；
@@ -37,6 +38,19 @@ const CONNECT_TIMEOUT_MS = 30_000;
 /** 进程退出时给 stdio 子进程发信号的兜底等待（ms）——实际由 SDK transport.close 的升级序列负责。 */
 export const STDIO_KILL_GRACE_MS = 600;
 
+/** `${ENV_VAR}` 展开（headers 值 use-time 解析；未设置的环境变量展开为空串，服务器 401 即暴露）。 */
+function expandEnvVars(value: string): string {
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, name: string) => process.env[name] ?? "");
+}
+
+/** http/sse 的 requestInit（注入展开后的自定义 headers；无 headers 返回空选项，SDK 走默认）。 */
+export function requestInitFor(cfg: McpServerConfig): { requestInit?: RequestInit } {
+  if (!cfg.headers) return {};
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(cfg.headers)) headers[k] = expandEnvVars(v);
+  return { requestInit: { headers } };
+}
+
 /** 按配置类型构建传输；缺 url/command 抛错（调用方转 failed）。 */
 function makeTransport(name: string, cfg: McpServerConfig): Transport {
   switch (cfg.type) {
@@ -53,11 +67,11 @@ function makeTransport(name: string, cfg: McpServerConfig): Transport {
       if (!cfg.url) throw new Error(`MCP server ${name} 缺 url`);
       // SDK 的 StreamableHTTPClientTransport 类型声明在 exactOptionalPropertyTypes 下 sessionId
       // 可选性不匹配（string|undefined 对 string），运行时合法；cast 掉类型噪声。
-      return new StreamableHTTPClientTransport(new URL(cfg.url), {}) as unknown as Transport;
+      return new StreamableHTTPClientTransport(new URL(cfg.url), requestInitFor(cfg)) as unknown as Transport;
     }
     case "sse": {
       if (!cfg.url) throw new Error(`MCP server ${name} 缺 url`);
-      return new SSEClientTransport(new URL(cfg.url), {});
+      return new SSEClientTransport(new URL(cfg.url), requestInitFor(cfg));
     }
   }
 }
@@ -104,7 +118,7 @@ export class McpManager {
         name,
         cfg.enabled === false
           ? { status: "disabled" }
-          : { status: "failed", error: "未连接（调 mcp_connect 连接）" },
+          : { status: "failed", error: "未连接（/mcp connect <name> 重连）" },
       );
     }
   }

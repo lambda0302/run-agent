@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -12,7 +12,6 @@ import type {
 } from "../../src/providers/types.js";
 import { runQuery } from "../../src/core/query.js";
 import type { Decision } from "../../src/permissions/types.js";
-import { makeMcpConnectTool } from "../../src/services/mcp/mcp_connect.js";
 import { McpManager } from "../../src/services/mcp/manager.js";
 import { startMockServer } from "../services/mcp/mockServer.js";
 import type { Tool } from "../../src/tools.js";
@@ -534,6 +533,42 @@ describe("runQuery V3 主动压缩 + 决策 8 指针化", () => {
     expect(readFileSync(path.join(dir, "r0.txt"), "utf8")).toBe("echo:" + "x".repeat(200));
   });
 
+  it("preserveResult 工具（SkillTool 类）超大结果豁免落盘，全文留在上下文", async () => {
+    process.env.RUN_AGENT_RESULT_SPILL_TOKENS = "10";
+    const dir = mkdtempSync(path.join(tmpdir(), "run-agent-spill-"));
+    spillDirs.push(dir);
+
+    const bigResult = "x".repeat(500); // 远超阈值 10（latin ≈ 125 token）
+    const exemptTool: Tool = {
+      name: "SkillTool",
+      description: "加载技能（测试豁免）",
+      inputSchema: z.object({ name: z.string() }),
+      isConcurrencySafe: false,
+      preserveResult: true,
+      call: async () => ({ result: bigResult }),
+    };
+
+    const fake = new FakeClient([
+      [
+        { type: "tool_use", id: "t1", name: "SkillTool", input: { name: "s" } },
+        { type: "done", stopReason: "tool_use" },
+      ],
+      [
+        { type: "text", text: "done" },
+        { type: "done", stopReason: "end_turn" },
+      ],
+    ]);
+    const r = await runQuery([{ role: "user", content: "go" }], {
+      client: fake,
+      tools: [exemptTool],
+      resultsDir: dir,
+    });
+
+    const toolMsg = r.messages.find((m) => m.role === "tool")!;
+    expect(toolMsg.content).toBe(bigResult); // 全文保留，无指针
+    expect(existsSync(path.join(dir, "r0.txt"))).toBe(false); // 未落盘
+  });
+
   it("无 resultsDir → 结果原样进消息列表（不落盘）", async () => {
     const fake = new FakeClient([
       [
@@ -622,7 +657,7 @@ describe("runQuery 0.3.1 反应式压缩 + 硬截断兜底", () => {
   });
 });
 
-// ── V5 决策 B3：动态工具注入（M2 验收——mcp_connect 注册的工具下一轮可调）────────
+// ── V5 决策 B3：动态工具注入（M2 验收——预连/重连注册的工具下一轮可调）────────
 // ── V5 决策 C：流式期间即时执行（工具早于 done 事件启动）─────────────────────────
 describe("runQuery 流式即时执行（V5 决策 C）", () => {
   it("第一个工具在 done 事件前已启动、结果在 done 后才完成（执行跨越流边界）", async () => {
@@ -715,12 +750,8 @@ describe("runQuery 流式即时执行（V5 决策 C）", () => {
 });
 
 describe("runQuery 动态工具（V5 决策 B3）", () => {
-  it("模型先调 mcp_connect 连接 mock server → 下一轮调 mcp__mock__echo 成功", async () => {
+  it("启动预连后模型直接调 mcp__mock__echo（V8 重设计①：不再经 mcp_connect）", async () => {
     const fake = new FakeClient([
-      [
-        { type: "tool_use", id: "c1", name: "mcp_connect", input: { server: "mock" } },
-        { type: "done", stopReason: "tool_use" },
-      ],
       [
         { type: "tool_use", id: "e1", name: "mcp__mock__echo", input: { x: "hi" } },
         { type: "done", stopReason: "tool_use" },
@@ -732,30 +763,30 @@ describe("runQuery 动态工具（V5 决策 B3）", () => {
     ]);
 
     const srv = await startMockServer([{ name: "echo", handler: (a) => `mock:${String(a.x)}` }]);
-    // transportOverrides：mcp_connect 内部走 manager.connect（无显式 transport），
-    // 经构造器注入 InMemoryTransport 覆盖按配置构建（生产不传，走真实 stdio/http/sse）
+    // transportOverrides：manager.connect 经构造器注入 InMemoryTransport 覆盖按配置构建
     const manager = new McpManager(
       { mock: { type: "stdio", command: "x" } },
       { mock: srv.clientTransport },
     );
-    const tools = (): Tool[] => [makeMcpConnectTool(manager), ...manager.getConnectedTools()];
+    // 模拟启动预连（重设计①）：连接 → 工具注册进池，模型直接可调
+    const pre = await manager.connect("mock");
+    expect(pre.ok).toBe(true);
+    const tools = (): Tool[] => manager.getConnectedTools();
     const calls: string[] = [];
 
     try {
-      const r = await runQuery([{ role: "user", content: "连接并回显 hi" }], {
+      const r = await runQuery([{ role: "user", content: "回显 hi" }], {
         client: fake,
         tools,
         onToolCall: (name) => calls.push(name),
       });
 
       expect(r.reply).toBe("完成");
-      expect(r.iterations).toBe(3);
-      // 调用序列：先连接、再调 MCP 工具
-      expect(calls).toEqual(["mcp_connect", "mcp__mock__echo"]);
-      // 第二轮起的工具列表应含 MCP 工具（动态注入生效）
-      const second = fake.toolSpecs[1]!;
-      expect(second.some((s) => s.name === "mcp__mock__echo")).toBe(true);
-      expect(second.some((s) => s.name === "mcp_connect")).toBe(true);
+      expect(r.iterations).toBe(2);
+      expect(calls).toEqual(["mcp__mock__echo"]);
+      // 首轮工具列表即含 MCP 工具（预连注册，函数池每轮重建）
+      const first = fake.toolSpecs[0]!;
+      expect(first.some((s) => s.name === "mcp__mock__echo")).toBe(true);
     } finally {
       await manager.closeAll();
       await srv.close();

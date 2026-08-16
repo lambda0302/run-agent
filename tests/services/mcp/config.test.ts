@@ -40,7 +40,6 @@ describe("loadMcpConfig", () => {
     const home = tempDir();
     const cfg = loadMcpConfig(tempDir(), true, home);
     expect(cfg.servers).toEqual({});
-    expect(cfg.preconnect).toBe(false);
   });
 
   it("用户级 stdio/http/sse 配置解析", () => {
@@ -68,6 +67,27 @@ describe("loadMcpConfig", () => {
     expect(cfg.servers.sse1).toEqual({ type: "sse", url: "https://example.com/sse" });
   });
 
+  it("http/sse 自定义 headers 解析（认证用，保留 ${ENV_VAR} 字面量供 use-time 展开）", () => {
+    const home = tempDir();
+    writeHomeConfig(home, {
+      servers: {
+        gh: {
+          type: "http",
+          url: "https://api.githubcopilot.com/mcp/",
+          headers: {
+            Authorization: "Bearer ${GITHUB_TOKEN}",
+            "X-Custom": "static",
+          },
+        },
+      },
+    });
+    const cfg = loadMcpConfig(tempDir(), true, home);
+    expect(cfg.servers.gh?.headers).toEqual({
+      Authorization: "Bearer ${GITHUB_TOKEN}",
+      "X-Custom": "static",
+    });
+  });
+
   it("项目级仅 Trust 加载；未 Trust 忽略；项目级同名覆盖用户级", () => {
     const home = tempDir();
     writeHomeConfig(home, {
@@ -91,14 +111,13 @@ describe("loadMcpConfig", () => {
     expect(cfg.servers.local).toEqual({ type: "stdio", command: "x" });
   });
 
-  it("enabled:false 保留；preconnect 用户或项目任一 true 即 true", () => {
+  it("enabled:false 保留；多余字段（preconnect 等）忽略", () => {
     const home = tempDir();
     writeHomeConfig(home, {
       preconnect: true,
       servers: { off: { type: "stdio", command: "x", enabled: false } },
     });
     const cfg = loadMcpConfig(tempDir(), true, home);
-    expect(cfg.preconnect).toBe(true);
     expect(cfg.servers.off).toEqual({ type: "stdio", command: "x", enabled: false });
   });
 

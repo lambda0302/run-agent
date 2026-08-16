@@ -54,7 +54,7 @@ function readlineTail(rl: readline.Interface): string {
 
 export interface AgentOptions {
   client: LLMClient;
-  /** V5 决策 B3：工具池可为函数（每轮重建，MCP 工具按需连接后动态注入）。 */
+  /** V5 决策 B3：工具池可为函数（每轮重建，MCP 工具预连后动态注入）。 */
   tools: Tool[] | (() => Tool[]);
   maxTokens?: number;
   /** V6 决策 D：ReAct 循环轮数上限（--max-turns），防 CI 失控；缺省 = 25。 */

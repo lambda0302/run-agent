@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { McpManager } from "../../../src/services/mcp/manager.js";
+import { McpManager, requestInitFor } from "../../../src/services/mcp/manager.js";
 import { startMockServer } from "./mockServer.js";
 
 /** 注入一个 start 即抛 401 的假传输（模拟 http 未授权，不发真请求）。 */
@@ -25,7 +25,7 @@ describe("McpManager 状态机 4 态", () => {
       off: { type: "stdio", command: "x", enabled: false },
     });
     expect(m.getStatuses()).toEqual([
-      { name: "a", status: "failed", error: "未连接（调 mcp_connect 连接）" },
+      { name: "a", status: "failed", error: "未连接（/mcp connect <name> 重连）" },
       { name: "off", status: "disabled" },
     ]);
   });
@@ -33,7 +33,7 @@ describe("McpManager 状态机 4 态", () => {
   it("连接成功 → connected；工具注册、只读 hint 生效", async () => {
     const m = new McpManager({ mock: { type: "stdio", command: "x" } });
     const srv = await startMockServer([
-      { name: "echo", readOnlyHint: false },
+      { name: "echo", readOnlyHint: false, inputSchema: { type: "object", properties: { x: { type: "string" } } } },
       { name: "ro_op", readOnlyHint: true },
     ]);
     try {
@@ -46,6 +46,11 @@ describe("McpManager 状态机 4 态", () => {
         ]);
         expect(res.tools.find((t) => t.name.endsWith("echo"))!.isConcurrencySafe).toBe(false);
         expect(res.tools.find((t) => t.name.endsWith("ro_op"))!.isConcurrencySafe).toBe(true);
+        // V8 重设计①：保留 server 原始 JSON Schema
+        expect(res.tools.find((t) => t.name.endsWith("echo"))!.jsonSchema).toEqual({
+          type: "object",
+          properties: { x: { type: "string" } },
+        });
       }
       expect(m.isReadOnly("mcp__mock__ro_op")).toBe(true);
       expect(m.isReadOnly("mcp__mock__echo")).toBe(false);
@@ -177,5 +182,39 @@ describe("McpManager 连接集成", () => {
     const res = await m.connect("mock", badTransport);
     expect(res.ok).toBe(false);
     await srv.close();
+  });
+});
+
+describe("requestInitFor（http/sse 认证 headers + ${ENV_VAR} 展开）", () => {
+  it("无 headers → 空选项（SDK 走默认）", () => {
+    expect(requestInitFor({ type: "http", url: "https://x/mcp" })).toEqual({});
+  });
+
+  it("headers 透传 + ${ENV_VAR} 展开为进程环境变量值", () => {
+    process.env.MCP_TEST_TOKEN = "tok-123";
+    try {
+      const init = requestInitFor({
+        type: "http",
+        url: "https://x/mcp",
+        headers: {
+          Authorization: "Bearer ${MCP_TEST_TOKEN}",
+          "X-Static": "v",
+        },
+      });
+      expect(init.requestInit).toEqual({
+        headers: { Authorization: "Bearer tok-123", "X-Static": "v" },
+      });
+    } finally {
+      delete process.env.MCP_TEST_TOKEN;
+    }
+  });
+
+  it("未设置的环境变量展开为空串（不抛错，服务器 401 即暴露）", () => {
+    const init = requestInitFor({
+      type: "http",
+      url: "https://x/mcp",
+      headers: { Authorization: "Bearer ${MCP_TEST_UNSET_VAR}" },
+    });
+    expect(init.requestInit).toEqual({ headers: { Authorization: "Bearer " } });
   });
 });

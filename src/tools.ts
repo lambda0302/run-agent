@@ -32,6 +32,12 @@ export interface Tool {
   /** 权限拒绝时的回填消息（缺省「权限被拒绝: 未授权执行 <name>」）。用于把拒绝的
    *  用户语义传达给模型（如「用户拒绝了计划，停止等待指令」），避免模型误读为自身状态错误。 */
   denyMessage?: string;
+  /** V3 决策 8 豁免：超大结果也不落盘换指针，全文保留在上下文（指令型结果，如 SkillTool 的
+   *  SKILL.md 全文——它的价值就是被完整读到，指针化会丢失全流程）。 */
+  preserveResult?: boolean;
+  /** V8 重设计①：MCP 工具保留 server 原始 JSON Schema，spec 生成优先直发（跳过
+   *  zodToJsonSchema 的 {type:"object"} 占位，模型可见真实入参结构）。缺省走 inputSchema 转换。 */
+  jsonSchema?: Record<string, unknown>;
 }
 
 /**
@@ -103,7 +109,7 @@ export function toToolSpecs(tools: Tool[]): ToolSpec[] {
   return tools.map((t) => ({
     name: t.name,
     description: t.description,
-    inputSchema: zodToJsonSchema(t.inputSchema),
+    inputSchema: t.jsonSchema ?? zodToJsonSchema(t.inputSchema),
   }));
 }
 
@@ -131,8 +137,6 @@ export interface BuildToolsOptions {
   checkPermission?: (tool: Tool, input: unknown) => Promise<Decision>;
   /** V5 决策 A：plan 模式导航工具（makePlanTools 的结果）。仅 REPL 传；one-shot 不传（无审批弹窗，防死锁）。 */
   planMode?: PlanTools;
-  /** V5 决策 B3：mcp_connect 工具（makeMcpConnectTool 的结果）。配置了 MCP server 才装配。 */
-  mcpConnect?: Tool;
   /** V6 决策 B2：技能注册表。有技能时装配 SkillTool。 */
   skills?: SkillRegistry;
   /** V7 决策 A2：agent 工具（子 agent 委派原语）。CLI 装配；子查询工具集由类型注册表解析。 */
@@ -170,10 +174,6 @@ export function buildTools(opts: BuildToolsOptions): Tool[] {
   // V5 决策 A4：plan 导航工具追加在后（仅交互 REPL）
   if (opts.planMode) {
     tools.push(...opts.planMode.tools);
-  }
-  // V5 决策 B3：mcp_connect 追加在最后（MCP server 配置存在才装配）
-  if (opts.mcpConnect) {
-    tools.push(opts.mcpConnect);
   }
   // V6 决策 B2：有技能时装配 SkillTool（模型运行时加载技能）
   if (opts.skills && opts.skills.all.length > 0) {

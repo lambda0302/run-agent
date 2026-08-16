@@ -19,13 +19,15 @@ export interface McpServerConfig {
   env?: Record<string, string>;
   /** http/sse：端点 URL */
   url?: string;
+  /** http/sse：自定义请求头（认证等）。值支持 `${ENV_VAR}` 展开（manager 侧 use-time 解析，
+   *  token 不落明文）；未设置的环境变量展开为空串（服务器 401 即暴露，走 needs-auth 态）。 */
+  headers?: Record<string, string>;
   /** enabled:false → disabled 态（不连接、不注入） */
   enabled?: boolean;
 }
 
 export interface McpConfig {
-  /** 启动即全量连接（默认 false，按需连接省 token/资源） */
-  preconnect?: boolean;
+  /** V8 重设计①：启动即连接全部 enabled server（配置驱动；无开关——enabled:false = 禁用不连）。 */
   servers: Record<string, McpServerConfig>;
 }
 
@@ -65,10 +67,13 @@ function parseJsonFile(file: string): McpConfig | undefined {
           ? { env: c.env as Record<string, string> }
           : {}),
         ...(typeof c.url === "string" ? { url: c.url } : {}),
+        ...(c.headers && typeof c.headers === "object" && !Array.isArray(c.headers)
+          ? { headers: c.headers as Record<string, string> }
+          : {}),
         ...(c.enabled === false ? { enabled: false } : {}),
       };
     }
-    return { preconnect: raw.preconnect === true, servers: clean };
+    return { servers: clean };
   } catch {
     return undefined;
   }
@@ -85,8 +90,5 @@ export function loadMcpConfig(
   const servers: Record<string, McpServerConfig> = {};
   if (user) Object.assign(servers, user.servers);
   if (project) Object.assign(servers, project.servers); // 项目级覆盖同名
-  return {
-    preconnect: (user?.preconnect ?? false) || (project?.preconnect ?? false),
-    servers,
-  };
+  return { servers };
 }

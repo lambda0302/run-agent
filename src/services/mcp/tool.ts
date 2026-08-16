@@ -2,8 +2,9 @@
  * V5 决策 B3：MCP 工具 → 标准 Tool 的包装器。
  * - 名：mcp__<normalizedServer>__<toolName>（normalizeNameForMCP：小写、非 [a-z0-9_] → _）。
  * - desc：截断到 MAX_MCP_DESCRIPTION_LENGTH（2048），防 OpenAPI 生成 server 的 15-60KB desc 灌爆上下文。
- * - inputSchema：z.record(z.string(), z.unknown())（passthrough 通配）——懒 schema，不为每个 MCP 工具
- *   传输/维护完整 zod schema，入参校验完全交给 server 自身；zodToJsonSchema 输出 { type:"object" }，几乎零 token。
+ * - jsonSchema：保留 server 原始 JSON Schema（V8 重设计①），spec 生成优先直发——模型可见真实入参结构；
+ *   缺省回退 inputSchema（z.record passthrough 通配），zodToJsonSchema 输出 { type:"object" }。
+ * - inputSchema：z.record(z.string(), z.unknown()) 仅作运行时兜底（调用校验交给 server 自身）。
  * - isConcurrencySafe = annotations?.readOnlyHint === true（只读工具可并行，其余串行）。
  * call 把 MCP callTool 的 text 内容拼回 tool_result；错误/isError 一律字符串回填（不 throw，loop 语义不变）。
  */
@@ -17,6 +18,8 @@ export const MAX_MCP_DESCRIPTION_LENGTH = 2048;
 export interface McpToolDescriptor {
   name: string;
   description?: string | undefined;
+  /** server 原始 JSON Schema（V8 重设计①：保留全量，注入工具描述）。 */
+  inputSchema?: Record<string, unknown> | undefined;
   /** SDK 的 annotations 含 readOnlyHint/destructiveHint/…，全可选；用宽松结构承接。 */
   annotations?: { readOnlyHint?: boolean | undefined; [k: string]: unknown } | undefined;
 }
@@ -48,6 +51,7 @@ export function wrapMcpTool(
     name,
     description:
       description || `MCP tool ${mcpTool.name} from server ${serverName}（server 未提供描述）`,
+    ...(mcpTool.inputSchema ? { jsonSchema: mcpTool.inputSchema } : {}),
     inputSchema: z.record(z.string(), z.unknown()),
     isConcurrencySafe: isReadOnly,
     async call(input): Promise<ToolCallResult> {

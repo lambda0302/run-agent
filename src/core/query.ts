@@ -24,7 +24,7 @@ export const TOOL_TRACE_RESULT_LIMIT = 2000;
 
 export interface RunQueryOptions {
   client: LLMClient;
-  /** V5 决策 B3：工具池可为函数（每轮重建——mcp_connect 注册新 MCP 工具后，下一轮迭代即可调用）。 */
+  /** V5 决策 B3：工具池可为函数（每轮重建——MCP 工具预连注册 / /mcp connect 重连后，下一轮即可调用）。 */
   tools: Tool[] | (() => Tool[]);
   maxTokens?: number;
   /** 防止死循环的轮数上限（V1 无 compact，靠它兜底） */
@@ -123,7 +123,7 @@ export async function runQuery(
   const maxRetries =
     opts.maxRetries ??
     (Number.isFinite(envRetries) && envRetries >= 0 ? Math.floor(envRetries) : DEFAULT_MAX_RETRIES);
-  // V5 决策 B3：每轮解析工具池（函数 → 重建；mcp_connect 注册后下一轮即可调用）
+  // V5 决策 B3：每轮解析工具池（函数 → 重建；MCP 预连/重连注册后下一轮即可调用）
   const getTools = (): Tool[] => (typeof opts.tools === "function" ? opts.tools() : opts.tools);
   const added: LLMMessage[] = [];
   let compacts = 0;
@@ -182,7 +182,7 @@ export async function runQuery(
       }
     }
 
-    // V5 决策 B3：工具 spec 每轮重建（MCP 工具按需连接后动态注入下一轮）。
+    // V5 决策 B3：工具 spec 每轮重建（MCP 工具预连后动态注入）。
     // 收尾轮（finalizing）不给任何工具——强制模型以纯文本给出最终结论。
     const toolSpecs = toToolSpecs(finalizing ? [] : getTools());
 
@@ -325,10 +325,15 @@ export async function runQuery(
     // 非 end_turn 一律回填 tool_result：max_tokens/error 下已执行的工具结果也落地，
     // 避免孤儿 tool_use 与模型重复执行同批工具。
     const results = executor ? await executor.getResults() : [];
+    // 决策 8 豁免集：preserveResult 工具（如 SkillTool）的结果不落盘换指针
+    const spillExempt = new Set<string>();
+    for (const t of typeof opts.tools === "function" ? opts.tools() : opts.tools) {
+      if (t.preserveResult) spillExempt.add(t.name);
+    }
     for (let i = 0; i < toolUses.length; i++) {
       let content: string = results[i] ?? "";
-      // 决策 8：超大结果落盘换指针（需 resultsDir；缺省原样进消息列表）
-      if (opts.resultsDir) {
+      // 决策 8：超大结果落盘换指针（需 resultsDir；缺省原样进消息列表；preserveResult 豁免）
+      if (opts.resultsDir && !spillExempt.has(toolUses[i]!.name)) {
         content = await spillOversizedResult(content, spillSeq++, opts.resultsDir);
       }
       pushConversation({ role: "tool", tool_use_id: toolUses[i]!.id, content });

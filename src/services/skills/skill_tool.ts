@@ -83,6 +83,8 @@ export function makeSkillTool(registry: SkillRegistry): Tool {
       args: z.record(z.string(), z.unknown()).optional(),
     }),
     isConcurrencySafe: false, // 激活技能改变工具池状态，串行
+    // 决策 8 豁免：SKILL.md 全文是指令不是数据，超大也不落盘换指针（指针化会丢全流程）。
+    preserveResult: true,
     async call(input) {
       const name = (input as { name: string }).name;
       const skill = registry.find(name);

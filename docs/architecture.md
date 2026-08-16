@@ -10,7 +10,7 @@ run-agent/
 ├── .github/workflows/ci.yml    # 三 OS × Node 20/22/24
 ├── docs/                       # 文档与路线图（mcp.md、plan-mode.md 见各版本）
 ├── examples/
-│   └── mcp-server/             # 示例 stdio MCP server（本地验证按需连接链路）
+│   └── mcp-server/             # 示例 stdio MCP server（本地验证 MCP 链路）
 ├── src/
 │   ├── cli/
 │   │   ├── index.ts            # Commander 入口：flag 解析 → 配置 → 会话 → 分发（装配 MCP manager；
@@ -34,8 +34,8 @@ run-agent/
 │   │   ├── openai.ts           # OpenAI + OpenAI 兼容共享实现（function calling 互转）
 │   │   └── ollama.ts           # Ollama（OpenAI SDK 指向本地 /v1）
 │   ├── services/
-│   │   ├── mcp/                # MCP 客户端：config（用户+Trust 项目合读）/ manager（状态机 4 态 + 按需连接）
-│   │   │                       #   tool（包装：命名/截断 2048/懒 schema/readOnlyHint）/ mcp_connect（工具工厂）
+│   │   ├── mcp/                # MCP 客户端：config（用户+Trust 项目合读）/ manager（状态机 4 态 + 启动预连）
+│   │   │                       #   tool（包装：命名/截断 2048/全量 schema/readOnlyHint）
 │   │   ├── hooks/              # V6 Hooks：config（settings.json 用户+Trust 项目合读）/ manager（五类事件
 │   │   │                       #   PreToolUse/PostToolUse/SessionStart/SessionEnd/Stop × execCommand/execHttp）
 │   │   ├── skills/             # V6 Skills：loader（frontmatter 扫描 + Trust 门控 + readSkillBody
@@ -48,7 +48,7 @@ run-agent/
 │   ├── tools.ts                # Tool 接口 + 注册表 + zod→JSONSchema 转换
 │   ├── tools/                  # 16 个内置工具（read/write/edit/glob/grep/bash/remember/repo_map/explore
 │   │                           #   + agent/send_message/task_stop + plan 导航 enter/exit_plan_mode
-│   │                           #   + mcp_connect + SkillTool）+ 动态 MCP 工具（mcp__server__tool）
+│   │                           #   + SkillTool）+ 动态 MCP 工具（mcp__server__tool）
 │   └── utils/
 │       ├── errors.ts           # RunAgentError
 │       └── sessionStorage.ts   # JSONL 会话持久化（含压缩边界重置点）
@@ -66,7 +66,7 @@ cli (入口：参数 → 配置 → 会话文件 → systemCtx/contextWindow →
         ├── core/compact.ts    (token 估算超阈值 → 摘要 → 边界消息；超大结果指针化)
         ├── providers (适配器：统一格式 ↔ 各家协议互转，差异止步于此)
         ├── tools (Tool 接口；zod schema → JSON Schema 暴露给模型)
-        └── services (McpManager：按需连接 mcp_connect → 包装 mcp__server__tool 进池，同一权限管线；
+        └── services (McpManager：启动预连 → 包装 mcp__server__tool 进池，同一权限管线；
                       HookManager：五类事件挂命令/HTTP，PreToolUse 可覆盖判定（engine deny 不可放行）；
                       SkillRegistry + SkillTool：加载技能、allowed-tools 过滤；CommandRegistry：prompt/local 命令；
                       AgentRegistry：agent 工具委派（前台阻塞/后台任务）+ CORE_TEAM_TOOLS 协调者三件套；
@@ -74,11 +74,11 @@ cli (入口：参数 → 配置 → 会话文件 → systemCtx/contextWindow →
 ```
 
 - **动态工具池（V5 决策 B3）**：`RunQueryOptions.tools` 可为 `() => Tool[]`。query 每轮调用
-  `getTools()` 重建工具 spec 与执行表，因此 `mcp_connect` 注册的 MCP 工具**下一轮请求**即可被模型调用。
+  `getTools()` 重建工具 spec 与执行表，因此预连注册的 MCP 工具**第一轮请求**即可被模型调用。
 - **流式即时执行（V5 决策 C）**：`src/core/execute.ts` 的 `StreamingToolExecutor` 让 tool_use block
   一完整就入队执行（不必等响应完结）——只读并行（上限 10）/ 写串行且不打断；流结束统一
   `getResults` 按 index 重排回填。transient 错误/反应式压缩路径先 drain 已启动的工具再重试。
-- **MCP 工具**：命名 `mcp__<server>__<tool>`，desc 截断 2048、懒 schema（`{type:"object"}`）、
+- **MCP 工具**：命名 `mcp__<server>__<tool>`，desc 截断 2048、连接时保留 server 全量 JSON Schema，
   `isConcurrencySafe = readOnlyHint`；权限与并发调度与内置工具同一管线（见 [mcp.md](mcp.md)）。
 
 - **统一内部消息格式**：`LLMMessage` 对齐 Anthropic 的 `tool_use`/`tool_result` block；
@@ -117,7 +117,7 @@ cli (入口：参数 → 配置 → 会话文件 → systemCtx/contextWindow →
 | `src/core/context.ts`    | managed 级记忆内容由后续版本填充；语义索引 → V5（repo_map 已随 0.4.1 落地）       |
 | `src/tools.ts`（`Tool`） | 新工具实现同一接口即可接入，写类工具显式 `isConcurrencySafe: false`               |
 | `src/providers/`         | 新适配器遵循同一 `LLMClient` 接口即可接入                                         |
-| `src/services/mcp/`      | 新 MCP 传输/能力（resources/prompts、preconnect 缓存）后续版本加入                |
+| `src/services/mcp/`      | 新 MCP 传输/能力（resources/prompts）后续版本加入                                |
 | `src/core/execute.ts`    | V7 任务级/后台并发（Agent 工具泛化）在 StreamingToolExecutor 之上叠加             |
 | `src/cli/repl.ts`        | session 切换 UI（0.8.1 已落地 promptSelect 方向键菜单）；TUI 从 V9 逐步加入        |
 

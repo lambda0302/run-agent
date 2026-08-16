@@ -4,7 +4,7 @@
 
 一个透明、多提供商的**终端编码 agent**：用自然语言让它读代码、改文件、跑命令、跑测试，并把每一步做了什么展示给你看。
 
-> 当前版本：**0.8.0**（权限重构：`run_bash` 六分类影响半径 + 判定链收口前置单线）。路线图见 [Plan.md](docs/Plan.md)。
+> 当前版本：**0.8.2**（Plan 模式完善：计划文件前置 + explore 引导 + planWasEdited + plan 专用提示词）。路线图见 [Plan.md](docs/Plan.md)。
 
 ## 前置条件
 
@@ -35,7 +35,7 @@ npm --version
 
 ```powershell
 npm install -g @liyiyong/run-agent
-run-agent --version    # 应输出 0.8.0
+run-agent --version    # 应输出 0.8.2
 ```
 
 **3. 设置 API key**（以 Anthropic 为例；完整方式见「[设置 API key](#设置-api-key)」）
@@ -309,8 +309,8 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 }
 ```
 
-进 REPL 后按需连接：`/mcp connect filesystem`，之后模型即可调 `mcp__filesystem__read_file` 等工具
-（MCP 工具与内置工具走同一权限管线）。默认不预连，省资源与 token。详见 [docs/mcp.md](docs/mcp.md)。
+配置后启动即预连：MCP 工具（`mcp__filesystem__read_file` 等）第一轮即可被模型调用；连接失败的
+server 用 `/mcp connect <name>` 手动重连（MCP 工具与内置工具走同一权限管线）。详见 [docs/mcp.md](docs/mcp.md)。
 
 ## 特性
 
@@ -325,10 +325,10 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **超大工具结果指针化**（V3）：超阈值结果落盘、消息里只留指针，模型需要时自己 `read_file`
 - **权限审批引擎**（V2 / 0.4.2 / V8）：`default` / `acceptEdits` 两档模式（bypass 已删除）+ **Plan 模式**（0.5.0，强制只读），危险目录黑名单 + 工作目录白名单 + 记忆读专属通道三层模型，**`run_bash` 六分类影响半径**（readonly 自动放行 / dangerous 硬拒 / 其余询问，判定链收口前置单线），内置危险命令与敏感路径底线，支持全局 + 项目级规则
 - **Plan 模式**（0.5.0）：复杂任务先只读探索、再出计划、经你批准才动手——`enter_plan_mode` 进入强制只读（写/执行/非只读 MCP 工具一律 deny），`exit_plan_mode` 呈现计划并弹窗审批（计划落盘 `.run-agent/plans/`），批准后自动恢复执行权限；也可直接 `/plan` 手动进入
-- **MCP 接入**（0.5.0）：接入标准协议生态（stdio / HTTP / SSE），配置 `mcp.json` 后按需 `mcp_connect <server>` 连接，MCP 工具（`mcp__server__tool`）与内置工具走同一权限管线；详见 [docs/mcp.md](docs/mcp.md)
+- **MCP 接入**（0.5.0）：接入标准协议生态（stdio / HTTP / SSE），配置 `mcp.json` 启动即预连所有 enabled server（连接失败可 `/mcp connect <server>` 重连），MCP 工具（`mcp__server__tool`）与内置工具走同一权限管线；详见 [docs/mcp.md](docs/mcp.md)
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json` / `.run-agent/mcp.json`，防提示注入
 - **流式即时执行**（0.5.0）：工具边流式边并行执行（不必等响应完结），只读并行（上限 10）/ 写串行、结果按原顺序回填
-- **16 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `agent`（委派子任务）· `send_message` / `task_stop`（协调者三件套）· `enter_plan_mode` / `exit_plan_mode`（Plan 导航）· `SkillTool`（V6，加载技能）+ 配置 MCP 时的 `mcp_connect` 与动态 MCP 工具
+- **16 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `agent`（委派子任务）· `send_message` / `task_stop`（协调者三件套）· `enter_plan_mode` / `exit_plan_mode`（Plan 导航）· `SkillTool`（V6，加载技能）+ 配置 MCP 时的动态 MCP 工具
 - **Hooks**（0.6.0）：五类事件（`PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `Stop`）挂 shell 命令或 HTTP 回调，配置 `settings.json`（用户级 + Trust 项目级）；`PreToolUse` 可返回 `permissionDecision` 覆盖判定（engine deny 硬底线不可放行），`Stop` 输出注入下一轮 system；详见 [docs/hooks.md](docs/hooks.md)
 - **Skills**（0.6.0）：预写专业工作流（`SKILL.md`，frontmatter `name`/`description`/`allowed-tools`），模型用 `SkillTool` 加载执行、或 REPL `/技能名` 直接触发；技能 body 调用时才加载（不塞 token），`allowed-tools` 限制工具（内置只读始终保留）；详见 [docs/skills.md](docs/skills.md)
 - **自定义命令**（0.6.0）：`.md` 模板（`@file` 内联 + 参数追加，走 agent 循环）或 `.py/.js/.ts` 脚本（解释器直跑，注入 `RUN_AGENT_CWD`/`RUN_AGENT_PROMPT`），REPL `/命令名` 触发；详见 [docs/commands.md](docs/commands.md)
@@ -341,7 +341,7 @@ run-agent --resume "继续"   # 在最近会话上下文上执行
 - **会话持久化**（0.8.1）：按项目分目录的 JSONL 追加、首行元数据、`--list` / `--resume <id>` / REPL `/sessions`
   切换（支持压缩边界续接、方向键菜单选择）
 
-V8 已交付 0.8.0（权限重构：`run_bash` 六分类 + 判定链收口前置单线，详见 [docs/permissions.md](docs/permissions.md)）；0.8.1（会话持久化 + 会话切换）已实现待发；V9 待做：TUI 等发布生态条目。Bug_V7.md 权限待修项归 V8 桶。
+V8 已交付 0.8.0（权限重构：`run_bash` 六分类 + 判定链收口前置单线，详见 [docs/permissions.md](docs/permissions.md)）；0.8.1（会话持久化 + 会话切换）已发布；0.8.2（Plan 模式完善：计划文件前置 + explore 引导 + planWasEdited + plan 专用提示词，详见 [docs/plan-mode.md](docs/plan-mode.md)）已实现待发；V9 待做：TUI 等发布生态条目。Bug_V7.md 权限待修项归 V8 桶。
 
 ## 安全模型
 

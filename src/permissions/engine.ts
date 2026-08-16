@@ -345,8 +345,8 @@ const PATH_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
  *   4.5. plan 文件豁免（精确文件 + plan 模式，write/edit/read 该文件）→ allow（V8 决策 G2）
  *   5. 路径危险段（.git/.claude/.run-agent，未豁免）→ deny（P1：plan 下也跑）
  *   6. plan 分支：enter_plan_mode allow / exit_plan_mode ask / 只读 cwd 内 allow、cwd 外 ask /
- *      写·执行·remember·MCP 非只读 deny（读侧与 default 共享，见 3-5）
- *   7. 导航工具（非 plan）免确认（enter/exit_plan_mode / mcp_connect）
+ *      MCP 外部工具 ask（黑盒，用户显式确认）/ 写·执行·remember deny（读侧与 default 共享，见 3-5）
+ *   7. 导航工具（非 plan）免确认（enter/exit_plan_mode）
  *   8. 用户 allow 规则 → allow（cwd 外访问的唯一授权通道；对 cwd 内保留"始终允许"语义）
  *   9. 白名单 + 模式兜底：run_bash 按 classify——readonly 自动 allow、其余 ask
  *      （acceptEdits 不放行 bash）；Windows 可疑路径 → ask；无路径工具 readOnlyNames → allow
@@ -415,21 +415,24 @@ export function hasPermissionsToUseTool(
     if (tool === "enter_plan_mode") return "allow";
     // exit_plan_mode 返回 ask：engine 放行工具本身，用户审批由 repl 的 ask 弹窗负责
     if (tool === "exit_plan_mode") return "ask";
-    // 只读探索（readOnlyNames 覆盖内置只读 + explore + MCP 只读 hint）：
+    // V8 决策：MCP 外部工具在 plan 下也 ask（参数是 server 黑盒，run-agent 无法判断读写；
+    //   要求用户显式确认每次外部调用；headless canPrompt=false 时由 prompt 层降级 deny）。
+    //   先于只读判定：无论装配闭包是否把某 MCP 工具归只读，plan 下都一律 ask。
+    if (tool.startsWith("mcp__")) return "ask";
+    // 只读探索（readOnlyNames 覆盖内置只读 + explore）：
     //   无路径入参（explore/repo_map）→ allow；cwd 内 → allow；cwd 外 → ask
     if (readOnlyNames(tool)) {
       if (!p) return "allow";
       if (pathInCwd(p, cwd)) return "allow";
       return "ask";
     }
-    // 其余（写类 / run_bash / remember / MCP 非只读）→ deny
+    // 其余（写类 / run_bash / remember / 未知外部工具）→ deny
     return "deny";
   }
 
   // 7. 导航工具（非 plan 模式）：模式切换免权限确认；「不在 plan 模式」的报错语义在工具层。
-  //    mcp_connect 同样免确认（V5 决策 B3：用户写好配置 = 已授权；项目级配置仅 Trust 加载是第二道门）。
-  if (tool === "enter_plan_mode" || tool === "exit_plan_mode" || tool === "mcp_connect")
-    return "allow";
+  //    （V8 重设计①：mcp_connect 工具已移除——连接完全配置驱动 + /mcp connect 命令。）
+  if (tool === "enter_plan_mode" || tool === "exit_plan_mode") return "allow";
 
   // 8. 用户 allow 规则（cwd 外唯一授权通道；也可显式放行 run_bash 等）
   for (const rule of rules) {
@@ -447,7 +450,8 @@ export function hasPermissionsToUseTool(
   if (!p) {
     // 无路径入参的工具（repo_map/explore/remember/glob 无 path 等）：不参与 cwd 边界。
     // 用 readOnlyNames（V5 决策 B4）而非硬编码 READ_ONLY_TOOLS：让 REPL/CLI 装配的扩展闭包
-    // （协调者三件套 agent/send_message/task_stop + explore + MCP readOnlyHint）在 default 下也免确认。
+    // （协调者三件套 agent/send_message/task_stop + explore）在 default 下也免确认。
+    // V8：MCP 工具不再并入——参数是 server 黑盒，三模式一律 ask（见 cli/index.ts readOnlyNames 注释）。
     // P2：acceptEdits 不再无条件放行无路径工具（remember 等 → ask）。
     if (readOnlyNames(tool)) return "allow";
     return "ask";

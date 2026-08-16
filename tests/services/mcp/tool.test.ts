@@ -3,7 +3,7 @@
  * call 的 text 提取与 isError 回填。
  */
 import { describe, expect, it } from "vitest";
-import { zodToJsonSchema } from "../../../src/tools.js";
+import { toToolSpecs, zodToJsonSchema } from "../../../src/tools.js";
 import type { McpClientLike, McpToolDescriptor } from "../../../src/services/mcp/tool.js";
 import {
   MAX_MCP_DESCRIPTION_LENGTH,
@@ -59,10 +59,28 @@ describe("wrapMcpTool", () => {
     expect(t3.description).toContain("c");
   });
 
-  it("懒 schema：z.record passthrough → JSON Schema { type: object }（零 token）", () => {
+  it("无 inputSchema → 回退懒 schema：z.record → JSON Schema { type: object }", () => {
     const tool = wrapMcpTool("s", desc, stubClient().client);
+    expect(tool.jsonSchema).toBeUndefined();
     const json = zodToJsonSchema(tool.inputSchema);
     expect(json).toEqual({ type: "object", additionalProperties: {} });
+  });
+
+  it("保留 server 原始 JSON Schema（V8 重设计①）：jsonSchema 直发、跳过 {type:object} 占位", () => {
+    const serverSchema = {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+    };
+    const tool = wrapMcpTool(
+      "s",
+      { name: "read_file", inputSchema: serverSchema },
+      stubClient().client,
+    );
+    expect(tool.jsonSchema).toEqual(serverSchema);
+    // spec 生成优先用 jsonSchema（模型可见真实入参结构）
+    const spec = toToolSpecs([tool])[0]!;
+    expect(spec.inputSchema).toEqual(serverSchema);
   });
 
   it("isConcurrencySafe = readOnlyHint；只读 true / 非只读 false", () => {

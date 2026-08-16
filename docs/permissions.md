@@ -33,18 +33,17 @@ CLI 可选两档：`default` / `acceptEdits`（`bypass` 已于 0.4.2 删除）�
 
 `plan` 是**会话内动态模式**，只由 `enter_plan_mode` 进入、`exit_plan_mode` 退出（用户也可敲 `/plan`
 直接进入）。plan 下强制只读：写/改/执行类工具（`write_file` / `edit_file` / `run_bash` /
-`remember` / MCP 非只读工具）一律 deny；只读工具 cwd 内放行、cwd 外 ask；`enter_plan_mode` 自身放行、
+`remember`）一律 deny；MCP 外部工具一律 ask（黑盒，用户显式确认）；只读工具 cwd 内放行、cwd 外 ask；
+`enter_plan_mode` 自身放行、
 `exit_plan_mode` 放行（它的审批由 REPL 弹窗负责）。`exit_plan_mode` 把计划直写 `.run-agent/plans/`
 并弹 `y/n` 审批，批准后恢复进入前的模式（`prePlanMode`）。one-shot 不装配 plan 工具、无 `/plan`。
 详见 [plan-mode.md](plan-mode.md)。
 
-### MCP 工具的只读判定（0.5.0 `readOnlyNames`）
+### MCP 工具权限（0.8.0 起三模式一律 ask）
 
-权限判定第 7 参 `readOnlyNames`（缺省 = 内置只读 ∪ explore，语义不变）把 **MCP 工具的 readOnlyHint**
-并入只读集合：只读 hint 的 MCP 工具按只读对待（cwd 内放行 / plan 下放行）；非只读 MCP 工具
-`default` 与 `acceptEdits` 都必 ask（P2 收窄：`acceptEdits` 只预授权 cwd 内 `write_file`/`edit_file`，
-**不放行 MCP 写工具**）、**plan 下 deny**。`mcp_connect` 免确认（配置动作），plan 下 deny。
-详见 [mcp.md](mcp.md)。
+MCP 工具参数是 server 内部黑盒，run-agent 不解析路径/命令——**三模式（default/acceptEdits/plan）
+一律 ask**（V8 决策）。`readOnlyHint` 不再进权限判定（只影响并发调度）：即使 server 标注只读也不免确认，
+每次调用都由用户显式确认；headless `canPrompt=false` 时 ask 降级 deny。详见 [mcp.md](mcp.md)。
 
 ## 三层模型
 
@@ -122,7 +121,7 @@ symlink 换名逃逸，并兼容 macOS `/var`→`/private/var` 之类的系统 s
    ——**plan 下也跑**（危险段/记忆豁免在 plan 分支前统一处理，堵 plan 绕过）
 6. **plan 分支**：`enter_plan_mode` 放行 / `exit_plan_mode` ask / 只读工具 cwd 内放行、cwd 外
    ask / 其余（写类、`run_bash`、`remember`、MCP 非只读）deny
-7. **导航工具**（`enter_plan_mode`/`exit_plan_mode`/`mcp_connect`）→ allow
+7. **导航工具**（`enter_plan_mode`/`exit_plan_mode`）→ allow
 8. **用户 allow 规则** → allow（cwd 外访问的唯一授权通道；也可显式放行 `run_bash`）
 9. **白名单 + 模式兜底**：`run_bash` 按六分类分流（`readonly` allow / 其余 ask）；Windows 可疑
    路径（UNC / ADS / 8.3 短名 / 长前缀 / 尾随点空格 / DOS 设备名 / 三连点）→ ask；无路径工具

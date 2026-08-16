@@ -44,7 +44,7 @@
 
 - **记忆来源分级**(user 指令级 / agent 参考级)→ 后续:agent 自写内容与用户同权,是持久化注入的远期核心缺口(`expected-permissions.md` §4 挂点 B)。
 - **记忆校验层**(格式 / 上限 / 损坏 / 落盘原子)→ 后续:当前提取已有成功才推进游标,但无格式校验层。
-- **MCP readOnlyHint 免确认 → 全 ask** → 后续:现状更宽松,目标更保守,评估影响面后定。
+- **~~MCP readOnlyHint 免确认 → 全 ask~~** → 已实施(2026-08-16):MCP 工具三模式一律 ask,`readOnlyHint` 只影响并发调度。
 - **沙箱** → 远期(V8+ 桶):跨平台成本极大(Windows 无原生 chroot、macOS sandbox-exec 已弃用),Linux/macOS 优先轻量隔离(bubblewrap),Windows 降级静态判定;纵深防御最终层,不取代静态分层。
 - **TUI 打磨**(Ink 渲染 / 工具执行可视化)→ V9。
 - **发布流水线自动化 / IDE 集成 / 评测公开 / 沙箱 / 可观测** → V9。
@@ -54,6 +54,12 @@
 14. **计划文件前置**(决策 G,已实施):进入 plan 即确定计划文件路径(沿用 `.run-agent/plans/plan-<ts>.md`),模型 plan 期间用 write_file/edit_file **增量打磨**;`exit_plan_mode` 入参 `plan` 变可选覆盖、缺省读盘。引擎新增「plan 文件写豁免」——精确文件 + 仅 plan 模式,收口在路径危险段之前。机制:`PermissionContext.planFilePath`(进入 plan 时 `makePlanTools.onEnter` 写入 ctx)+ `getPlanFilePath()` getter + `repl.ts` 每轮把 mode/planFilePath 同步进 systemCtx。
 15. **plan 期间 explore 子 agent 引导**(决策 H,已实施):system prompt 动态段(仅 `ctx.mode === "plan"` 注入)引导模型用 agent + explore 子 agent 只读探测(轻量 CC Phase 1),避免乱用写工具被 deny 浪费时间。权限面已就绪,纯提示词工作。注入点为 `formatDynamic` 的 `mode === "plan"` 分支(五段:状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束)。
 16. **planWasEdited**(决策 I,已实施):REPL 审批弹窗加「编辑后批准」→ 系统编辑器改计划文件 → 批准时检测内容变化,经 `updatedInput` 传给工具 → tool_result 标注「已批准计划(用户已编辑)」,模型据此知道计划被改过(对齐 CC CCR `updatedInput` 语义)。管线:`resolveAsk` 返回 `PermissionCheckResult`(可含 updatedInput)+ `execute.ts` allow 时并入 item.input + `plan_mode.ts` exit schema 收 `planWasEdited`。
+
+**0.8.2「MCP 重设计批次」**(2026-08-16,按用户指令 2→1→3 顺序落地;与 Plan 完善同批未发版):
+
+17. **MCP 认证 `headers` + `${ENV_VAR}` 展开**(决策:身份认证短期方案):`mcp.json` 的 http/sse server 支持 `headers` 自定义请求头(认证等),值支持 `${ENV_VAR}` 运行时从进程环境展开——token 不落明文;未设置的环境变量展开为空串(服务器 401 即暴露,走 `needs-auth` 态)。stdio 不需要:`env` 直接传给子进程。机制:`requestInitFor` 在 connect 时展开。
+18. **MCP 工具三模式一律 `ask`**(决策:MCP 黑盒,参数不可分级):MCP 工具参数是 server 内部黑盒,run-agent 不解析路径/命令——default/acceptEdits/plan 三模式一律 ask,`readOnlyHint` 不再免确认(只影响并发调度 `isConcurrencySafe`)。default/acceptEdits 由 CLI 装配闭包落地(MCP 移除只读判定 → 兜底 ask),plan 由引擎层硬保证(`mcp__` 前缀判定先于只读分支)。
+19. **MCP 连接模型重设计①**(决策:默认预连 + 全量 schema):默认**启动预连**所有 enabled server(配置驱动,删除 `preconnect` 字段与 `mcp_connect` 工具,连接改为纯配置动作);连接失败/401 非致命,各自进 `failed`/`needs-auth` 态,`/mcp connect <name>` 手动重连。连接时**保留 server 全量 JSON Schema**(`Tool.jsonSchema`)注入工具 spec(模型可见真实入参结构,替换懒 `{type:"object"}` 占位),server 没给 schema 才回退 `z.record` 通配。
 
 ---
 
@@ -98,7 +104,7 @@
 
 - **所有 deny 点(危险段、R3/R4 整类、用户 deny)先跑,所有 allow/ask 后跑**;不分叉、不每个分支自包含再查一遍(否则新分支再加放行条件时会再次漏同步)。
 - **豁免必须比收口更窄**:记忆豁免是唯一允许出现在收口之前的点,且用 `forms.every`(所有形态都是豁免路径)而非 `forms.some` 自证更窄。
-- **用户 deny 先于一切内置放行**(P3):用户显式规则优先于 `mcp_connect`/`enter_plan_mode` 等导航工具。
+- **用户 deny 先于一切内置放行**(P3):用户显式规则优先于 `enter_plan_mode`/`exit_plan_mode` 等导航工具。
 
 **B2. 防复发铁律**(`expected-permissions.md` §10):
 
@@ -257,6 +263,6 @@
 
 ## §5 交接(给 V9)
 
-- **0.8.1 已发布**(2026-08-15):commit `746254f` + tag `v0.8.1` + npm latest `0.8.1`;发布后 CI 测试-only 修复 `d8aeb09`(见 `docs/Bug_V8.md` V8-5)。**V8 桶内下一交付 = 0.8.2「Plan 模式完善」**(决策 G/H/I:计划文件前置 + explore 引导 + planWasEdited),方案已制定见 §1。
+- **0.8.1 已发布**(2026-08-15):commit `746254f` + tag `v0.8.1` + npm latest `0.8.1`;发布后 CI 测试-only 修复 `d8aeb09`(见 `docs/Bug_V8.md` V8-5)。**V8 桶内下一交付 = 0.8.2**(「Plan 模式完善」决策 G/H/I:计划文件前置 + explore 引导 + planWasEdited;已 commit 未发版 + 「MCP 重设计批次」决策 17/18/19:headers 认证 + 三模式 ask + 连接模型重设计①,未 commit),待用户确认后一并发版。
 - **V9 承接**:原 V8「发布与生态」——发布流水线自动化、TUI 打磨、评测公开(SWE-bench 子集)、IDE 集成、沙箱、可观测、社区运营。
-- **长期缺口(在 V8+ 桶积累)**:记忆来源分级(user 指令级 / agent 参考级)、记忆校验层、MCP readOnlyHint → 全 ask、沙箱(远期,纵深防御最终层)。
+- **长期缺口(在 V8+ 桶积累)**:记忆来源分级(user 指令级 / agent 参考级)、记忆校验层、沙箱(远期,纵深防御最终层)。

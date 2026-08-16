@@ -168,7 +168,7 @@
 | 6 | 记忆读 | 专属通道 + **来源分级**（user 指令级 / agent 参考级） | `isMemoryReadExempt`（只读 × memory/** × Trust） | **缺来源分级**：agent 写的内容与用户同权 |
 | 7 | 记忆写 | `remember` + 提取层 + 落盘原子 | `remember` 工具（写类走引擎）+ `ExtractMemoriesEngine`（游标增量/成功才推进） | 提取已实现；缺校验层（格式/上限/损坏）与来源标注 |
 | 8 | 信任边界 | 物理位置（realpath 双形态） | `pathForms`/`pathInCwd` 已实现（V6-3 /var 修复） | **已一致** |
-| 9 | MCP/外部工具 | 全 ask（交互时）/ 后台降级 deny | `readOnlyHint` 并入只读 → 部分免确认；非只读 default ask | 现状更宽松，目标更保守 |
+| 9 | MCP/外部工具 | 全 ask（交互时）/ 后台降级 deny | 已全 ask（V8 落地：`readOnlyHint` 只影响并发调度） | **已一致（V8）** |
 | 10 | 后台弹窗 | ask 降级 deny | 已实现（后台永不弹窗） | **已一致** |
 | 11 | 判定顺序 | 用户 deny 先于导航工具；plan 内 `.run-agent` 非 memory 仍 deny | 导航工具先于用户 deny（V7-P3）；plan 分支绕过危险目录段（V7-P1） | **需修**：两处判定顺序 bug |
 | 12 | 子 agent 继承 | 父级继承 + 类型级覆写 + 后台降级 | `PermissionBridge` + `AgentTypeDef.checkPermission` 已实现 | **已一致** |
@@ -178,7 +178,7 @@
 
 **需修（判定顺序，V7 修复批次①）：**
 - P1：plan 分支内 `.run-agent` 非 memory 仍 deny——豁免收口到 `isMemoryReadExempt`
-- P3：用户 deny 提到导航工具（enter/exit_plan_mode、mcp_connect）之前
+- P3：用户 deny 提到导航工具（enter/exit_plan_mode）之前
 
 **需修（语义收口，V7 修复批次③）：**
 - P2：acceptEdits 收紧为「只预授权 cwd 内文件写」，无路径工具不再一并放行
@@ -193,7 +193,7 @@
 - 危险命令：黑名单 → R3/R4 整类（近期先做 bash 落地版）
 - bash：完整五层智能分层 + R1 acceptEdits 自动 allow → 依赖沙箱，推迟（近期只做 §2 近期版）
 - 记忆：加来源分级 + 校验层
-- MCP：readOnlyHint 免确认 → 全 ask（评估影响面后定）
+- ~~MCP：readOnlyHint 免确认 → 全 ask~~ → **V8 已落地**（0.8.0 起 MCP 工具三模式一律 ask）
 
 **低优先补正则（V7 修复批次②）：**
 - P4：`git -C … push --force`、`of=//dev` 变体

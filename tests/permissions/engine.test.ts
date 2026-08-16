@@ -580,12 +580,8 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
     ).toBe("deny");
   });
 
-  it("用户 deny 优先于导航工具（P3 修复：mcp_connect / enter_plan_mode 先查用户 deny）", () => {
+  it("用户 deny 优先于导航工具（P3 修复：enter_plan_mode 先查用户 deny）", () => {
     const dir = workdir();
-    const denyMcp: PermissionRule[] = [{ tool: "mcp_connect", action: "deny" }];
-    expect(
-      hasPermissionsToUseTool("mcp_connect", { server: "s" }, "default", denyMcp, false, dir),
-    ).toBe("deny");
     const denyEnter: PermissionRule[] = [{ tool: "enter_plan_mode", action: "deny" }];
     expect(
       hasPermissionsToUseTool("enter_plan_mode", {}, "default", denyEnter, false, dir),
@@ -1007,27 +1003,47 @@ describe("hasPermissionsToUseTool 协调者三件套（V7 修复）", () => {
   });
 });
 
-// ── V5 决策 B4：MCP 工具权限（mcp_connect 免确认 + readOnlyNames 矩阵）────────
-describe("hasPermissionsToUseTool MCP（V5 决策 B4）", () => {
-  // REPL 装配闭包：内置只读 ∪ explore ∪ MCP readOnlyHints（mcp__srv__ro_op）
+// ── V8 决策：MCP 外部工具三模式一律 ask（mcp_connect 工具已移除）────
+describe("hasPermissionsToUseTool MCP（V8 三模式 ask）", () => {
+  // 模拟旧装配闭包仍把某 MCP 工具归只读——V8 下即使如此也要 ask（MCP-ask 先于只读判定）
   const readOnlyWithMcp = (name: string) =>
     ["read_file", "glob", "grep", "repo_map", "explore", "mcp__srv__ro_op"].includes(name);
 
-  it("mcp_connect 免确认：default/acceptEdits 下 allow；plan 下 deny（保守）", () => {
+  it("MCP 工具三模式一律 ask（真实装配闭包：MCP 不再并入只读）", () => {
     const dir = workdir();
-    for (const mode of ["default", "acceptEdits"] as const) {
+    // 真实 cli/index.ts readOnlyNames 闭包：不含 MCP → default/acceptEdits 落到 ask；
+    // plan 下 engine 对 mcp__* 无条件 ask（先于只读判定）
+    const readOnlyNoMcp = (name: string) =>
+      ["read_file", "glob", "grep", "repo_map", "explore"].includes(name);
+    for (const mode of ["default", "acceptEdits", "plan"] as const) {
       expect(
-        hasPermissionsToUseTool("mcp_connect", { server: "srv" }, mode, RULES, false, dir),
-        mode,
-      ).toBe("allow");
+        hasPermissionsToUseTool(
+          "mcp__srv__ro_op",
+          { path: "a.txt" },
+          mode,
+          RULES,
+          false,
+          dir,
+          readOnlyNoMcp,
+        ),
+        `${mode}: ro_op`,
+      ).toBe("ask");
+      expect(
+        hasPermissionsToUseTool(
+          "mcp__srv__write",
+          { path: "a.txt" },
+          mode,
+          RULES,
+          false,
+          dir,
+          readOnlyNoMcp,
+        ),
+        `${mode}: write`,
+      ).toBe("ask");
     }
-    // plan 分支先于导航豁免：连接会 spawn 子进程/开网络会话，plan 强制只读 → deny
-    expect(
-      hasPermissionsToUseTool("mcp_connect", { server: "srv" }, "plan", RULES, false, dir),
-    ).toBe("deny");
   });
 
-  it("MCP 只读工具（readOnlyHint）在 plan 下 allow；写工具 deny", () => {
+  it("plan 下即使闭包把 MCP 归只读也一律 ask（engine 层硬保证，先于只读判定）", () => {
     const dir = workdir();
     expect(
       hasPermissionsToUseTool(
@@ -1039,56 +1055,20 @@ describe("hasPermissionsToUseTool MCP（V5 决策 B4）", () => {
         dir,
         readOnlyWithMcp,
       ),
-    ).toBe("allow");
-    expect(
-      hasPermissionsToUseTool(
-        "mcp__srv__write",
-        { path: "a.txt" },
-        "plan",
-        RULES,
-        false,
-        dir,
-        readOnlyWithMcp,
-      ),
-    ).toBe("deny");
-  });
-
-  it("MCP 只读 hint 缺失（缺省 readOnlyNames）→ plan 下 deny（保守缺省）", () => {
-    const dir = workdir();
-    // 未传 readOnlyNames → mcp 工具不在集内 → plan 下 deny
-    expect(
-      hasPermissionsToUseTool("mcp__srv__ro_op", { path: "a.txt" }, "plan", RULES, false, dir),
-    ).toBe("deny");
-  });
-
-  it("MCP 非只读工具 default/acceptEdits 语义：default ask / acceptEdits 也 ask（P2 收紧）", () => {
-    const dir = workdir();
-    expect(
-      hasPermissionsToUseTool(
-        "mcp__srv__write",
-        { path: "a.txt" },
-        "default",
-        RULES,
-        false,
-        dir,
-        readOnlyWithMcp,
-      ),
-    ).toBe("ask");
-    // P2：acceptEdits 只预授权内置 write_file/edit_file，MCP 写工具一律 ask（保持弹窗人工把关）
-    expect(
-      hasPermissionsToUseTool(
-        "mcp__srv__write",
-        { path: "a.txt" },
-        "acceptEdits",
-        RULES,
-        false,
-        dir,
-        readOnlyWithMcp,
-      ),
     ).toBe("ask");
   });
 
-  it("default 下 MCP 工具走同一管线：用户 deny 规则作用于 mcp 工具", () => {
+  it("缺省 readOnlyNames（MCP 不在集内）→ 三模式仍 ask（黑盒外部工具，非 deny）", () => {
+    const dir = workdir();
+    for (const mode of ["default", "acceptEdits", "plan"] as const) {
+      expect(
+        hasPermissionsToUseTool("mcp__srv__ro_op", { path: "a.txt" }, mode, RULES, false, dir),
+        mode,
+      ).toBe("ask");
+    }
+  });
+
+  it("MCP 工具走同一管线：用户 deny 规则先于一切放行（作用于 mcp 工具）", () => {
     const dir = workdir();
     const deny = [{ tool: "mcp__srv__rm", action: "deny" as const }];
     expect(

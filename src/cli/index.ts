@@ -26,7 +26,6 @@ import type { Tool } from "../tools.js";
 import { makePlanTools } from "../tools/plan_mode.js";
 import type { PlanTools } from "../tools/plan_mode.js";
 import { loadMcpConfig } from "../services/mcp/config.js";
-import { makeMcpConnectTool } from "../services/mcp/mcp_connect.js";
 import { McpManager } from "../services/mcp/manager.js";
 import { isHooksConfigEmpty, loadHooksConfig } from "../services/hooks/config.js";
 import { HookManager } from "../services/hooks/manager.js";
@@ -296,15 +295,14 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     });
   }
 
-  // ── V5 决策 B：MCP 连接管理器（配置了 server 才创建；默认不预连省 token/资源）────
+  // ── V5 决策 B：MCP 连接管理器（配置了 server 才创建）────
+  // V8 重设计①：默认预连所有 enabled server（配置驱动；enabled:false 不连）。
+  // 连接失败/401 各自进 failed/needs-auth 态，不阻断启动；/mcp connect <name> 手动重连。
   const mcpConfig = loadMcpConfig(cwd, isTrusted);
   let mcpManager: McpManager | undefined;
   if (Object.keys(mcpConfig.servers).length > 0) {
     mcpManager = new McpManager(mcpConfig.servers);
-    if (mcpConfig.preconnect) {
-      // 高级选项：启动即全量连接（默认 false）。连接失败各自进 failed 态，不阻断启动。
-      await Promise.all(mcpManager.serverNames().map((name) => mcpManager!.connect(name)));
-    }
+    await Promise.all(mcpManager.serverNames().map((name) => mcpManager!.connect(name)));
     // 进程退出清理所有子进程/连接（fire-and-forget；stdio transport 内部有 SIGINT→SIGTERM→SIGKILL 升级）
     process.on("exit", () => {
       void mcpManager?.closeAll();
@@ -407,15 +405,15 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     hookManager = new HookManager(hooksConfig, { cwd, sessionFile });
   }
 
-  // V5 决策 B4：只读判定闭包 = 内置只读 ∪ explore ∪ 协调者三件套 ∪ MCP readOnlyHint（权限管线并入）
+  // V8 决策：只读判定闭包 = 内置只读 ∪ explore ∪ 协调者三件套（不含 MCP readOnlyHint——
+  // MCP 工具三模式一律 ask：参数是 server 黑盒，run-agent 不解析路径/命令，只读 hint 不再免确认）
   // agent/send_message/task_stop 无文件/外部副作用（只改内存状态），归只读 → default 免确认
   const readOnlyNames = (name: string): boolean =>
     isBuiltinReadOnlyTool(name) ||
     name === "explore" ||
     name === "agent" ||
     name === "send_message" ||
-    name === "task_stop" ||
-    (mcpManager?.isReadOnly(name) ?? false);
+    name === "task_stop";
 
   // ── V7 决策 A/B：agent 注册表 + 后台任务注册表 + 权限桥 + agent 工具 ──────
   const agentRegistry = new AgentRegistry(builtinAgentTypes());
@@ -481,7 +479,7 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     });
   }
 
-  // 静态工具一次装配（含 mcp_connect + agent 委派原语）；MCP 已连接工具每轮动态追加（函数池，决策 B3）
+  // 静态工具一次装配（含 agent 委派原语）；MCP 已连接工具每轮动态追加（函数池，决策 B3）
   const baseTools = buildTools({
     cwd,
     isTrusted,
@@ -490,7 +488,6 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
     ...(contextWindow ? { contextWindow } : {}),
     checkPermission: exploreCheckPermission,
     ...(planCtrl ? { planMode: planCtrl } : {}),
-    ...(mcpManager ? { mcpConnect: makeMcpConnectTool(mcpManager) } : {}),
     ...(skillRegistry ? { skills: skillRegistry } : {}),
     agentTool,
     sendMessageTool: makeSendMessageTool(backgroundTasks),

@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- **MCP 认证 `headers` + `${ENV_VAR}` 展开**（MCP 接入补强）：`mcp.json` 的 http/sse server 支持 `headers`
+  自定义请求头（认证等），值支持 `${ENV_VAR}` 运行时从进程环境展开——token 不落明文；未设置的环境变量
+  展开为空串（服务器 401 即暴露，走 `needs-auth` 态）。stdio 不需要：`env` 直接传给子进程。
+
+### Changed
+
+- **MCP 工具三模式一律 `ask`**（V8 决策）：MCP 工具参数是 server 内部黑盒，run-agent 不解析路径/命令——
+  default/acceptEdits/plan 三模式一律 ask，`readOnlyHint` 不再免确认（只影响并发调度）。default/acceptEdits
+  由 CLI 装配闭包落地（MCP 移除只读判定 → 兜底 ask），plan 由引擎层硬保证（`mcp__` 前缀判定先于只读分支）。
+- **MCP 连接模型重设计①**：默认**启动预连**所有 enabled server（配置驱动，删除 `preconnect` 字段与
+  `mcp_connect` 工具，连接改为纯配置动作）；连接失败/401 非致命，各自进 `failed`/`needs-auth` 态，
+  `/mcp connect <name>` 手动重连。连接时**保留 server 全量 JSON Schema** 注入工具 spec（模型可见真实
+  入参结构，替换懒 `{type:"object"}` 占位），server 没给 schema 才回退 `z.record` 通配。
+
 ## [0.8.1] - 2026-08-15
 
 ### Added

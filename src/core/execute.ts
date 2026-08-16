@@ -45,7 +45,7 @@ export function updatedInputOf(r: PermissionCheckResult): Record<string, unknown
 }
 
 export interface ExecuteOptions {
-  /** V5 决策 B3：工具池可为函数（每轮解析——mcp_connect 注册新 MCP 工具后，同轮后续 block 也可找到）。 */
+  /** V5 决策 B3：工具池可为函数（每轮解析——MCP 预连/重连注册新工具后，同轮后续 block 也可找到）。 */
   tools: Tool[] | (() => Tool[]);
   /** 权限回调：返回 allow/deny（ask 已由上层 resolve）；缺省 = 不设权限限制 */
   checkPermission?: (tool: Tool, input: unknown) => Promise<PermissionCheckResult>;

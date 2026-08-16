@@ -1,13 +1,13 @@
 # MCP 示例 server
 
-最小 stdio MCP server，供本地验证 run-agent 的按需连接端到端链路。无真实 I/O 副作用。
+最小 stdio MCP server，供本地验证 run-agent 的 MCP 接入端到端链路。无真实 I/O 副作用。
 
 ## 暴露的工具
 
-| 工具        | 说明                | 只读标注                              |
-| ----------- | ------------------- | ------------------------------------- |
-| `echo`      | 原样返回给定文本    | ✅（连上后 plan 模式可用、可并行）    |
-| `timestamp` | 返回当前 ISO 时间戳 | ❌（示范：default 必 ask、plan deny） |
+| 工具        | 说明                | 只读标注                             |
+| ----------- | ------------------- | ------------------------------------ |
+| `echo`      | 原样返回给定文本    | ✅（仅并发调度：可并行）             |
+| `timestamp` | 返回当前 ISO 时间戳 | ❌（串行；权限上三模式一律 ask）      |
 
 ## 运行
 
@@ -28,26 +28,22 @@ node examples/mcp-server/index.js
    EOF
    ```
 
-2. 进 REPL，`/mcp` 应看到 `demo`（未连接）：
+2. 进 REPL，`/mcp` 应看到 `demo`（启动已预连）：
 
    ```
    run-agent> /mcp
    MCP servers:
-     ✗ demo (failed) — 未连接（调 mcp_connect 连接）
+     ✓ demo (connected) — 已连接，注册 2 个工具
    ```
 
-3. 连接并调用：
+3. 直接让模型调 `mcp__demo__echo` / `mcp__demo__timestamp`（第一轮起可用）。
 
-   ```
-   run-agent> /mcp connect demo
-   ✓ 已连接 demo，注册 2 个工具
-   ```
-
-   之后让模型调 `mcp__demo__echo` / `mcp__demo__timestamp`（连接后下一轮起可用）。
+   若连接失败（server 未起来等），进 `failed` 态不阻断启动，用 `/mcp connect demo` 手动重连。
 
 ## 权限观察点
 
-- `echo` 带 `readOnlyHint` → default 下免确认；`timestamp` 非只读 → default 必 ask。
-- plan 模式下：`echo` allow、`timestamp` deny、`mcp_connect` deny。
+- `echo` 带 `readOnlyHint` → 仅**并发调度**（可并行），不再免确认——MCP 工具参数是 server 黑盒，
+  **三模式一律 ask**（default/acceptEdits/plan 都逐次确认）。
+- `timestamp` 非只读 → 串行；权限同样三模式一律 ask。
 
 详见 [docs/mcp.md](../../docs/mcp.md)。

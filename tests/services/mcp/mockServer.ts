@@ -11,6 +11,8 @@ export interface MockToolDef {
   name: string;
   description?: string;
   readOnlyHint?: boolean;
+  /** 工具 JSON Schema（缺省空对象 { type:"object", properties:{} }）。 */
+  inputSchema?: Record<string, unknown>;
   /** 处理调用；返回文本（缺省 "ok:<name>"）。 */
   handler?: (args: Record<string, unknown>) => string;
   /** 置 true 时 handler 返回 isError。 */
@@ -30,7 +32,7 @@ export async function startMockServer(tools: MockToolDef[]): Promise<MockServerH
     tools: tools.map((t) => ({
       name: t.name,
       description: t.description ?? "",
-      inputSchema: { type: "object", properties: {}, additionalProperties: true },
+      inputSchema: t.inputSchema ?? { type: "object", properties: {}, additionalProperties: true },
       ...(t.readOnlyHint ? { annotations: { readOnlyHint: true } } : {}),
     })),
   }));

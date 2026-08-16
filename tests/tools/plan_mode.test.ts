@@ -222,29 +222,6 @@ describe("buildTools 装配边界（V5 决策 A4）", () => {
   });
 });
 
-describe("buildTools 装配边界（V5 决策 B3）", () => {
-  it("不传 mcpConnect → 无 mcp_connect 工具", () => {
-    const tools = buildTools({ cwd: tempDir(), isTrusted: false });
-    expect(tools.some((t) => t.name === "mcp_connect")).toBe(false);
-  });
-
-  it("传 mcpConnect → mcp_connect 追加在 plan 导航之后（内置永远在前）", () => {
-    const box = modeBox("default");
-    const pt = makePlanTools({ getMode: box.get, setMode: box.set, canPrompt: true });
-    const fake: Tool = {
-      name: "mcp_connect",
-      description: "fake",
-      inputSchema: z.object({ server: z.string() }),
-      async call() {
-        return { result: "ok" };
-      },
-    };
-    const tools = buildTools({ cwd: tempDir(), isTrusted: false, planMode: pt, mcpConnect: fake });
-    expect(tools[tools.length - 1]!.name).toBe("mcp_connect");
-    expect(tools[tools.length - 2]!.name).toBe("exit_plan_mode");
-  });
-});
-
 describe("REPL 全流程集成（两条进入路径 → 禁写 → 审批 → 恢复）", () => {
   it("用户 /plan 进入 → 写 deny / 只读 allow → exit(ask y) → 恢复 default 写需确认", async () => {
     const cwd = tempDir();
