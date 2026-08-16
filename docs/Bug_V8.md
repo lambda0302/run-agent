@@ -14,7 +14,7 @@
 | V8-4   | 会话时间直接 slice 文件名字戳（UTC）→ `--list`/`/sessions` 显示偏早 8 小时                              | 会话/展示    | 🟡 中  | ✅ 已解决       |
 | V8-5   | sanitizePath 测试用 Windows 路径字面量 → POSIX 拼 cwd 断言失败（CI 6 job 挂，Windows 侥幸通过）           | 测试/跨平台  | 🟠 高  | ✅ 已解决       |
 | V8-P1  | REPL 兜底抛错无接盘：compact 兜底链 `throw e` 成 unhandledRejection → Node 20+ 默认 throw，REPL 崩溃    | 可靠性/REPL  | 🟠 高  | ⏳ 待修         |
-| V8-6   | headless JSON 契约测试未同步 V8.3 动态上下文移入 messages（消息数 4→5，CI 9 job 全挂）                    | 测试/契约    | 🟡 中  | ✅ 已解决（2026-08-16）              |
+| V8-6   | headless JSON 契约测试未同步 V8.3 动态上下文移入 messages（消息数 4→5，CI 9 job 全挂）                    | 测试/契约    | 🟡 中  | ✅ 已解决（769b3bd）                 |
 | V8-P2  | extractMemories 只读三件套无条件 allow，绕过主引擎路径危险段判定 → 改走主引擎管线（记忆豁免/cwd 内可读） | 权限/子Agent | 🟡 中  | ✅ 已解决（67aed8a）                 |
 
 ---
@@ -62,13 +62,13 @@
 
 - **现象**（CI 暴露）：V8.3 批次 push 后 CI **9 job 全挂**——`tests/cli/headless.test.ts` 断言 `json.messages === 4`，实际 5。
 - **根因**：V8.3 把时间戳等动态上下文从 system 移入 messages，headless（`--print`）走 `runOneShot` 同样每轮插一条动态上下文 user 消息（`DYNAMIC_CONTEXT_MARKER` 前缀）。`json.messages = result.messages.length` 因此从 4 变 5（dynamic(user) + user + assistant(tool_use) + tool + assistant(text)）。**本地漏测**：headless 测试跑 `dist/cli.js`（`test` 脚本先 build），本地 `npx vitest run` 不重建 dist，跑的是旧产物——CI 的 `npm test` 先 build 才暴露。
-- **修复**（`tests/cli/headless.test.ts`，2026-08-16）：断言改 5 + 注释更新。**教训**：改 `runOneShot`/消息装配相关行为后，本地验证必须 `npm run build` 再跑 headless 测试（或直接 `npm test`），不能只跑 `npx vitest run`。
+- **修复**（`tests/cli/headless.test.ts`，2026-08-16，commit `769b3bd`）：断言改 5 + 注释更新。**教训**：改 `runOneShot`/消息装配相关行为后，本地验证必须 `npm run build` 再跑 headless 测试（或直接 `npm test`），不能只跑 `npx vitest run`。
 
 ### V8-P2（中）extractMemories 只读三件套无条件 allow → 改走主引擎管线
 
 - **现象**：extractMemories 子 agent 的 `makeExtractMemCheckPermission` 对 `read_file`/`glob`/`grep` **无条件 allow**，绕过主权限引擎的路径危险段判定（`.git`/`.claude`/`.run-agent`）；而 `src/tools/read.ts` 的 read_file 工具本身**零路径校验**——安全完全依赖 checkPermission。
 - **风险面**：增量消息夹带的提示注入可诱导提取器读任意敏感路径（`~/.ssh/id_rsa`、`.env` 等）。旧缓解仅 Trust 门控 + 4 工具白名单。
-- **修复**（`src/services/agents/builtin/extractMemories.ts`，2026-08-16，待 commit）：`makeExtractMemCheckPermission(isTrusted, cwd, rules)` 不再对只读三件套无条件放行，改走主引擎单线管线 `hasPermissionsToUseTool`（default 模式）——记忆读豁免（`.run-agent/memory/**`·Trust）、路径危险段、cwd 边界、Windows 可疑路径、用户 deny/allow 规则**全部生效**；后台无交互，engine 的 ask 一律降级 deny → 只读范围收敛为「记忆目录 + 项目内」。装配：`ExtractEngineOptions` 加 `rules`（CLI 透传 `ctx.rules`，用户级 + Trust 项目级），def 移除静态 `checkPermission` 字段（extract.ts 触发时现配）。
+- **修复**（`src/services/agents/builtin/extractMemories.ts`，2026-08-16，commit `67aed8a`）：`makeExtractMemCheckPermission(isTrusted, cwd, rules)` 不再对只读三件套无条件放行，改走主引擎单线管线 `hasPermissionsToUseTool`（default 模式）——记忆读豁免（`.run-agent/memory/**`·Trust）、路径危险段、cwd 边界、Windows 可疑路径、用户 deny/allow 规则**全部生效**；后台无交互，engine 的 ask 一律降级 deny → 只读范围收敛为「记忆目录 + 项目内」。装配：`ExtractEngineOptions` 加 `rules`（CLI 透传 `ctx.rules`，用户级 + Trust 项目级），def 移除静态 `checkPermission` 字段（extract.ts 触发时现配）。
 - **测试**：路径相关断言矩阵（记忆豁免 allow / cwd 内 allow / 无路径 allow / 危险段 deny / cwd 外 deny / 用户 deny 规则生效 / 未 Trust 无豁免 / 永不 ask）。
 - **教训**：子 agent 的类型级权限策略必须与主引擎共享同一判定管线——自定义策略一旦引入「无条件 allow」，就失去了引擎的路径/危险段防线；工具自身的零校验更要求权限层严格。
 
