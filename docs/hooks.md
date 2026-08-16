@@ -75,8 +75,9 @@ PreToolUse hook 的 stdout 若为 JSON 且含 `permissionDecision`，会**覆盖
 ## Stop：跨轮注入
 
 `Stop` hook 在**每轮** agent 循环结束时触发，带最终回复 `reply`。其 stdout（合并、每条限 2KB）
-注入**下一轮**请求的 system 动态段——可用于状态保持、进度上报、记忆提醒。one-shot 无下一轮，
-Stop 只触发、不注入。
+注入**下一轮**请求的动态上下文块（V8.3 起动态上下文在 messages 里、随用户 query 前插入；
+不再进 system，保 system 前缀字节稳定）——可用于状态保持、进度上报、记忆提醒。one-shot
+无下一轮，Stop 只触发、不注入。
 
 ## 与其它特性的关系
 

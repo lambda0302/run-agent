@@ -75,7 +75,8 @@ describe("extractMemories 类型（决策 E2）", () => {
     expect(EXTRACT_MEMORY_SYSTEM).toContain("frontmatter 四类");
   });
 
-  it("权限策略：remember allow(Trust) / deny(未 Trust)；只读放行；其余 deny（永不 ask）", async () => {
+  it("权限策略(V8-P2)：remember allow(Trust)/deny(未 Trust)；read 三件套走主引擎(记忆豁免/cwd 内 allow,危险段/cwd 外/用户规则 deny)；其余 deny（永不 ask）", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "run-agent-extract-perm-"));
     const tool = (name: string): Tool => ({
       name,
       description: name,
@@ -84,16 +85,35 @@ describe("extractMemories 类型（决策 E2）", () => {
         return { result: "" };
       },
     });
-    const trusted = makeExtractMemCheckPermission(true);
-    const untrusted = makeExtractMemCheckPermission(false);
+    const trusted = makeExtractMemCheckPermission(true, cwd, []);
+    const untrusted = makeExtractMemCheckPermission(false, cwd, []);
+    // remember：Trust allow / 未 Trust deny
     expect(decisionOf(await trusted(tool("remember"), { content: "x" }))).toBe("allow");
     expect(decisionOf(await untrusted(tool("remember"), { content: "x" }))).toBe("deny");
+    // 只读三件套：无路径入参(glob 缺省 cwd)与 cwd 内 → allow
     expect(decisionOf(await trusted(tool("read_file"), {}))).toBe("allow");
     expect(decisionOf(await trusted(tool("grep"), {}))).toBe("allow");
+    expect(decisionOf(await trusted(tool("read_file"), { file_path: path.join(cwd, "a.ts") }))).toBe("allow");
+    // 记忆目录豁免(.run-agent/memory/**)→ allow(先读索引/去重的合法用途)
+    expect(decisionOf(await trusted(tool("read_file"), { file_path: path.join(cwd, ".run-agent", "memory", "m.md") }))).toBe("allow");
+    // 路径危险段：非记忆 .run-agent / .git → deny(V8-P2 核心修复)
+    expect(decisionOf(await trusted(tool("read_file"), { file_path: path.join(cwd, ".run-agent", "config.json") }))).toBe("deny");
+    expect(decisionOf(await trusted(tool("read_file"), { file_path: path.join(cwd, ".git", "config") }))).toBe("deny");
+    // cwd 外 → engine ask → 后台降级 deny
+    expect(decisionOf(await trusted(tool("read_file"), { file_path: path.join(os.tmpdir(), "outside.txt") }))).toBe("deny");
+    // 未 Trust：记忆豁免不生效 → .run-agent 段 deny
+    expect(decisionOf(await untrusted(tool("read_file"), { file_path: path.join(cwd, ".run-agent", "memory", "m.md") }))).toBe("deny");
+    // 用户 deny 规则生效(P3 最高优先)
+    const ruled = makeExtractMemCheckPermission(true, cwd, [
+      { action: "deny", tool: "read_file", path: "**" },
+    ]);
+    expect(decisionOf(await ruled(tool("read_file"), { file_path: path.join(cwd, "a.ts") }))).toBe("deny");
+    // 非工具集 → deny
     expect(decisionOf(await trusted(tool("write_file"), {}))).toBe("deny");
     expect(decisionOf(await trusted(tool("run_bash"), { command: "ls" }))).toBe("deny");
     // 永不出 ask：策略全量 allow/deny，后台无交互
     expect(decisionOf(await trusted(tool("remember"), {}))).not.toBe("ask");
+    await rm(cwd, { recursive: true, force: true });
   });
 });
 
@@ -111,6 +131,7 @@ describe("ExtractMemoriesEngine（决策 E1/E3）", () => {
       cwd,
       isTrusted: overrides.isTrusted ?? true,
       bare: overrides.bare ?? false,
+      rules: [],
       client: fake,
       parentTools: () => [
         makeRememberTool({ cwd, isTrusted: overrides.isTrusted ?? true }),

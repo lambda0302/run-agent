@@ -14,6 +14,8 @@
  * prePlanMode / planFilePath 存工厂闭包（单会话单实例，天然安全）；/plan 手动入口与
  * enter_plan_mode 共用同一状态机（决策 A5）——两者都通过本工厂的 enter 记录 prePlanMode
  * 并确定 planFilePath（经 onEnter 回调给 cli 写入 ctx.planFilePath，供引擎豁免/审批编辑使用）。
+ * /plan 是 toggle（V8）：plan 下再敲由本工厂的 exitPlanManually 直接恢复 prePlanMode（用户
+ * 主动退出，不经 exit_plan_mode 的审批弹窗；计划文件已写入则保留在盘上，未写入不补写）。
  */
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -42,6 +44,8 @@ export interface PlanTools {
   tools: Tool[];
   /** /plan 手动进入：已在 plan 返回 false；否则记录 prePlanMode 并 setMode("plan")。 */
   enterPlanManually(): boolean;
+  /** V8：/plan toggle——plan 下手动退出（直接恢复 prePlanMode，不经审批弹窗）；非 plan 返回 false。 */
+  exitPlanManually(): boolean;
   /** V8 决策 G：当前 plan 会话的计划文件路径（进入 plan 后确定；未进入时 undefined）。 */
   getPlanFilePath(): string | undefined;
 }
@@ -173,6 +177,11 @@ export function makePlanTools(deps: PlanModeOptions): PlanTools {
     tools: [enter, exit],
     enterPlanManually(): boolean {
       return doEnter().entered;
+    },
+    exitPlanManually(): boolean {
+      if (deps.getMode() !== "plan") return false;
+      deps.setMode(prePlanMode);
+      return true;
     },
     getPlanFilePath: () => planFilePath,
   };

@@ -142,10 +142,13 @@ describe("REPL 自定义命令（V6 决策 C2）", () => {
       [{ input: "/summ 补充说明", waitFor: "已处理" }, "/exit"],
     );
     expect(out).toContain("已加载命令 summ");
-    const user = client.calls[0]?.find((m) => m.role === "user");
-    expect(typeof user?.content).toBe("string");
-    expect(user?.content as string).toContain("文件内容XYZ");
-    expect(user?.content as string).toContain("补充说明");
+    // 模板展开的 user 消息：动态上下文是独立 user 消息（带 DYNAMIC_CONTEXT_MARKER），不与模板混合
+    const users = (client.calls[0] ?? []).filter(
+      (m): m is { role: "user"; content: string } => m.role === "user" && typeof m.content === "string",
+    );
+    const expanded = users.find((m) => m.content.includes("文件内容XYZ"));
+    expect(expanded).toBeDefined();
+    expect(expanded?.content).toContain("补充说明");
     expect(out).toContain("已处理");
   });
 

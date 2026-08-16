@@ -37,7 +37,7 @@ npm test 是唯一测试入口;改完 src/ 后先 build 再 vitest run 验证。
 
 - `scope` **默认 `"project"`**——agent 主动沉淀只写项目级 `.run-agent/memory/`,一步完成「写 topic 文件 + 更新索引行」(按 `name` 命中先更新,不重复建文件)。
 - `scope="user"` 写用户级 `~/.config/run-agent/CLAUDE.md`(0.3.2 单文件行为保留),**仅在用户明确要求「更新用户记忆」时用**,由 system 指引 + 工具描述约束,不做技术强制。
-- 双门控:权限引擎(默认模式下 ask,可被用户规则 deny)+ **Trust**(未信任项目拒绝写项目记忆)。
+- 双门控:权限引擎(**Trust 门控的 allow**——记忆写豁免,engine 第 4.6 步,default/acceptEdits/plan 全模式放行;未 Trust 兜底 ask/plan deny;用户 deny 规则仍最高)+ **Trust**(未信任项目拒绝写项目记忆)。
 - 写目标由工具内部计算(cwd 由 CLI 装配注入),不接受入参路径 → 模型无法任意写文件。
 
 ## 双轨:每轮结束后台提取(0.7.1,V7 决策 E)
@@ -58,7 +58,7 @@ npm test 是唯一测试入口;改完 src/ 后先 build 再 vitest run 验证。
 
 提取子 agent(`extractMemories` 内置类型,不进主 agent 可 spawn 清单):
 
-- 工具集只读三件套 + `remember`;权限 `ask→deny`,唯一例外 `remember→allow`(仅 Trust,后台无交互);
+- 工具集只读三件套 + `remember`;权限:只读三件套**走主引擎管线** `hasPermissionsToUseTool`(记忆豁免 `.run-agent/memory/**` + 路径危险段 `.git/.claude/.run-agent` + cwd 边界 + 用户规则全生效;后台无交互 `ask→deny` → 仅记忆目录/项目内可读),`remember→allow` 仅 Trust、其余 deny(永不 ask);
 - `maxIterations: 5` 硬顶;注入增量消息(≤30 条 / 60KB)+ 现有记忆索引,先读索引防重复;
 - **成本**:每 user turn 至多一次额外 LLM 调用(游标增量 + 互斥 + 增量太少跳过大幅降低实际触发);prompt 量级 2-5k token,非全量历史。
 
@@ -99,8 +99,8 @@ npm test 是唯一测试入口;改完 src/ 后先 build 再 vitest run 验证。
 
 ## 安全边界
 
-- **读豁免(唯一的有意放宽)**:Trust 会话内,`read_file`/`glob`/`grep` 对 `.run-agent/memory/**` 放行(引擎 `isMemoryReadExempt`,判定在内置 deny 之前);其余 `.run-agent` 内容(CLAUDE.md/permissions.json)与 `write_file`/`edit_file`/`run_bash` 命令文本仍全禁。
+- **读豁免 + 写豁免(仅有的两个有意放宽)**:Trust 会话内,`read_file`/`glob`/`grep` 对 `.run-agent/memory/**` 读放行(引擎 `isMemoryReadExempt`,第 4 步);`remember` 记忆写全模式 allow(第 4.6 步,写目标工具内部硬编码);其余 `.run-agent` 内容(CLAUDE.md/permissions.json)与 `write_file`/`edit_file`/`run_bash` 命令文本仍全禁。
 - **遍历层对齐(0.4.0 已前拉 V4.5 决策 F)**:`glob`/`grep` 的 `ALWAYS_IGNORE` 含 `.run-agent`,整目录扫不会带出记忆;模型读记忆用 `read_file` 或显式 `path=<memoryDir>` 的 grep。
 - 未 Trust 项目:豁免不生效,`.run-agent/memory/` 对 agent 完全不可见。
 - 写入口只有 `remember`(权限 + Trust 双门控);模型无法用其它工具触碰 `.run-agent`。
-- **自注入残余风险**(受信任项目内模型写的记忆可能夹带私货):写入口走权限引擎必问、索引只在 Trust 注入、`prune` 可过期、读到的记忆先验证再采信——可接受范围,与 Claude Code 的 `MEMORY_DRIFT_CAVEAT` 一致。
+- **自注入残余风险**(受信任项目内模型写的记忆可能夹带私货):写入口是 Trust 门控的 allow(写目标硬编码,无路径入参可诱导——引擎第 4.6 步豁免,防护靠工具契约而非弹窗)、索引只在 Trust 注入、`prune` 可过期、读到的记忆先验证再采信——可接受范围,与 Claude Code 的 `MEMORY_DRIFT_CAVEAT` 一致。

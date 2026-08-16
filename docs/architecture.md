@@ -61,8 +61,9 @@ run-agent/
 ```
 cli (入口：参数 → 配置 → 会话文件 → systemCtx/contextWindow → 装配 MCP manager + hooks/skills/commands)
   └── core/query.ts (agent loop：只认统一 LLMMessage；工具池每轮重建——函数型 tools 支持动态注入)
-        ├── core/context.ts    (system 组装：角色准则 + CLAUDE.md 记忆 + 日期/git 动态段 + MCP server 提示
-        │                       + 技能清单 + Stop hook 注入段)
+        ├── core/context.ts    (system 只组稳定部分：角色准则 + CLAUDE.md 记忆 + MEMORY.md 索引；
+        │                       动态上下文 buildDynamicContext 产出 → 每轮用户 query 前插 messages——
+        │                       时间戳/工作目录/git/plan 引导/MCP server 提示/技能清单/Stop hook 注入段)
         ├── core/compact.ts    (token 估算超阈值 → 摘要 → 边界消息；超大结果指针化)
         ├── providers (适配器：统一格式 ↔ 各家协议互转，差异止步于此)
         ├── tools (Tool 接口；zod schema → JSON Schema 暴露给模型)

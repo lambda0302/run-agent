@@ -2,7 +2,11 @@
  * V3 上下文组装：
  * - token 估算（零依赖启发式，CJK 加权）；
  * - git 状态收集（并发 execFile + 800ms 超时 + 3s TTL 缓存）；
- * - system prompt 组装（稳定/动态边界：稳定前缀保 cache 复用，动态后缀是日期/git）；
+ * - system prompt 组装（稳定/动态边界）：system 只保留**字节稳定**部分（角色准则 + CLAUDE.md
+ *   记忆 + MEMORY.md 索引），时间戳/工作目录/git/plan 引导/hook 输出等全部动态上下文
+ *   由 `buildDynamicContext` 产出、REPL 每轮在用户 query 前插入 messages（V8.3 决策——
+ *   DeepSeek 自动前缀缓存从 token 0 命中，system 前缀一字节都不能变，动态块在缓存点之后
+ *   追加，不影响前缀）；
  * - CLAUDE.md 四级记忆（managed→user→project→local，直读 fs，project/local 受 Trust 门控）。
  */
 import { execFile } from "node:child_process";
@@ -223,7 +227,10 @@ const STABLE_SYSTEM = `你是 run-agent，一个运行在终端里的编码 agen
 - 主动沉淀：发现值得跨会话保留的稳定结论时，用 remember 工具写入——默认写项目级（.run-agent/memory/，一步完成写文件+更新索引），type 为 ${MEMORY_TYPES.join("/")}。${NOT_TO_SAVE_GUIDANCE}
 - 用户级记忆（~/.config/run-agent/CLAUDE.md）只在用户明确要求「更新用户记忆」时才写，绝不主动改动。`;
 
-const DYNAMIC_DIVIDER = "\n\n──────────────────────── 动态上下文 ────────────────────────\n";
+/** V8.3 决策：动态上下文消息的前缀标记——REPL 用它识别并清理上一轮注入的动态消息
+ * （历史里不累积旧快照；resume 加载的旧动态消息一并清掉）。前缀足够独特，正常用户输入
+ * 不可能以此开头，`startsWith` 精确匹配不会误删用户消息。 */
+export const DYNAMIC_CONTEXT_MARKER = "[run-agent 动态上下文";
 
 function formatDynamic(
   ctx: SystemContext,
@@ -240,6 +247,7 @@ function formatDynamic(
       [
         "你当前处于 plan 模式（强制只读）——写/改/执行类工具（write_file/edit_file/run_bash 等）会被权限拒绝。",
         "不要在 plan 模式下尝试任何写操作或运行命令，也不要因权限拒绝而困惑：那是预期行为。只读探索 + 打磨计划文件即可。",
+        "例外：remember 记忆沉淀在 plan 下仍允许（写记忆是 meta 动作，不算项目变更）——发现值得跨会话保留的结论仍可写入。",
         "优先用只读工具探索代码库、权衡多种方案后给出计划。范围广/不确定时，用 agent 工具委派 explore 子 agent 做只读探索：每个 explore 聚焦一个探索问题，范围广时并行发多个（explore 只读安全，可放心并行）。",
         `计划文件: ${ctx.planFilePath ?? "路径见 enter_plan_mode 返回"}——可用 write_file/edit_file 增量打磨内容，exit_plan_mode 批准时从该文件读取最终计划。`,
         "准备就绪后用 exit_plan_mode 呈现计划供用户审批。若用户拒绝，立即停止当前工作并等待用户下一条指令；若用户有修改意见，按其指示调整后再重新呈现计划。",
@@ -284,19 +292,43 @@ function formatDynamic(
   return bits.join("\n");
 }
 
+export interface DynamicContextOptions {
+  git?: GitContext;
+  date?: string;
+  hookOutput?: string;
+}
+
 /**
- * 组装 system prompt：稳定部分（角色准则 + CLAUDE.md 记忆）+ 动态部分（日期/git/目录/hook 输出）。
- * 动态在后、稳定在前，保住稳定前缀的 prompt cache 复用。
+ * V8.3 决策：组装当前轮的动态上下文文本（时间戳 + 工作目录 + plan 引导 + MCP/skills 清单 +
+ * 协调者段 + Stop hook 输出 + git 状态）。由 REPL / one-shot 每轮在用户 query 前插入
+ * messages（独立 user 消息，见 `DYNAMIC_CONTEXT_MARKER`），**不再进 system**——system 保持
+ * 字节稳定，保 DeepSeek 自动前缀缓存从 token 0 命中；动态块在缓存点之后追加，不影响前缀。
  * @param opts.git 注入 git 上下文（测试用）；缺省时内部收集。
- * @param opts.hookOutput V6 决策 A1：Stop hook 注入输出（每轮可变，放动态段）。
+ * @param opts.hookOutput V6 决策 A1：Stop hook 注入输出（每轮可变）。
+ */
+export async function buildDynamicContext(
+  ctx: SystemContext,
+  opts: DynamicContextOptions = {},
+): Promise<string> {
+  // --bare：禁用全部动态上下文注入（与 buildSystemPrompt 一致）；返回空串 → 上层不插入消息。
+  if (ctx.bare) return "";
+  const git = opts.git ?? (await collectGitContext(ctx.cwd));
+  const date = opts.date ?? new Date().toISOString().replace("T", " ").slice(0, 19) + "Z";
+  return formatDynamic(ctx, git, date, opts.hookOutput);
+}
+
+/**
+ * 组装 system prompt：只返回**字节稳定**部分（角色准则 + CLAUDE.md 记忆 + MEMORY.md 索引）。
+ * 动态上下文（时间戳/git/plan 引导/hook 输出）一律不进 system——由 `buildDynamicContext`
+ * 产出，REPL 每轮在用户 query 前插入 messages（V8.3 决策）。稳定前缀保住 prompt cache 复用：
+ * DeepSeek 自动前缀缓存从 token 0 命中，前缀一字节变化都会让整段（含 messages 历史）以全价 miss。
+ * @param opts.homeDir 测试沙箱注入；缺省取系统 homedir。
  */
 export async function buildSystemPrompt(
   ctx: SystemContext,
-  opts: { git?: GitContext; date?: string; homeDir?: string; hookOutput?: string } = {},
+  opts: { homeDir?: string } = {},
 ): Promise<string | undefined> {
   if (ctx.bare) return undefined;
-  const git = opts.git ?? (await collectGitContext(ctx.cwd));
-  const date = opts.date ?? new Date().toISOString().replace("T", " ").slice(0, 19) + "Z";
 
   const stableParts = [STABLE_SYSTEM];
   const memory = collectClaudeFiles(ctx.cwd, ctx.isTrusted, opts.homeDir);
@@ -306,7 +338,5 @@ export async function buildSystemPrompt(
   const indexBlock = await buildMemoryIndexBlock(memoryDirPath(ctx.cwd), ctx.isTrusted);
   if (indexBlock) stableParts.push(indexBlock);
 
-  return (
-    stableParts.join("\n\n") + DYNAMIC_DIVIDER + formatDynamic(ctx, git, date, opts.hookOutput)
-  );
+  return stableParts.join("\n\n");
 }

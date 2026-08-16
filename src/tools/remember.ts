@@ -164,7 +164,9 @@ async function writeProjectMemory(args: ProjectMemoryInput): Promise<ToolCallRes
  * remember 工具：主动沉淀跨会话记忆。
  * - scope 默认 "project"：写 `.run-agent/memory/<name>.md` + 更新 MEMORY.md 索引（写目标内部计算，不接受入参路径）；
  * - scope="user"：写用户级 CLAUDE.md（仅用户明确要求时用，system 指引 + 工具描述约束）；
- * - 权限引擎门控照旧：default 下 ask、acceptEdits 下 allow、用户规则可 deny；
+ * - 权限引擎门控（V8）：default/acceptEdits/plan 全模式 allow（engine 第 4.6 步记忆写豁免，
+ *   仅 Trust；未 Trust 走兜底 ask/plan deny）——写目标硬编码 + Trust 门，引擎无路径可防；
+ *   用户 deny 规则仍最高；
  * - homeDir/cwd/isTrusted 由 CLI 装配时注入（测试沙箱注入 homeDir）。
  */
 export function makeRememberTool(opts: RememberToolOptions = {}): Tool {

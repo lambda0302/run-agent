@@ -36,7 +36,7 @@ run-agent
 | `--print <p>`        | headless：跑完这条 prompt 一次就退出（与位置参数 prompt 互斥）                    |
 | `--json`             | headless 结构化输出：stdout 只出 JSON，人类日志去 stderr（需 `--print`）          |
 | `--max-turns <n>`    | headless 的 ReAct 循环轮数上限（默认 25）；撞顶仍在调工具时多跑一轮纯文本收尾（0.7.2） |
-| `--coordinator`      | 0.7.0：协调者模式——注入协调者 system，用 `agent`/`send_message`/`task_stop` 编排子 agent |
+| `--coordinator`      | 0.7.0：协调者模式——动态上下文块注入协调者段落，用 `agent`/`send_message`/`task_stop` 编排子 agent |
 
 ## 配置优先级
 

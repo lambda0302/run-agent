@@ -536,13 +536,20 @@ describe("hasPermissionsToUseTool 决策矩阵", () => {
   });
 
   // ── 无路径工具（不参与 cwd 边界）──
-  it("无路径工具（remember）：default / acceptEdits 都 ask（P2 收紧）；可被用户规则 deny", () => {
+  it("remember：Trusted → default/acceptEdits/plan 全 allow（4.6 记忆写豁免）；未 Trust → ask/plan deny；用户 deny 仍最高", () => {
     const input = { content: "记住 npm test" };
+    // Trusted：全模式豁免（与读豁免对称；plan 下也放行——记忆写是 meta 动作，用户拍板）
+    expect(hasPermissionsToUseTool("remember", input, "default", RULES, true)).toBe("allow");
+    expect(hasPermissionsToUseTool("remember", input, "acceptEdits", RULES, true)).toBe("allow");
+    expect(hasPermissionsToUseTool("remember", input, "plan", RULES, true)).toBe("allow");
+    // 未 Trust：无豁免 → default/acceptEdits 兜底 ask（工具内部 writeProjectMemory 同样拒绝）
     expect(hasPermissionsToUseTool("remember", input, "default", RULES)).toBe("ask");
-    // P2：acceptEdits 只预授权 cwd 内 write_file/edit_file，无路径工具不再无条件放行
     expect(hasPermissionsToUseTool("remember", input, "acceptEdits", RULES)).toBe("ask");
+    // 未 Trust → plan 分支兜底 deny
+    expect(hasPermissionsToUseTool("remember", input, "plan", RULES)).toBe("deny");
+    // 用户 deny 规则仍最高（第 1 步先于豁免）
     const deny: PermissionRule[] = [{ tool: "remember", action: "deny" }];
-    expect(hasPermissionsToUseTool("remember", input, "default", deny)).toBe("deny");
+    expect(hasPermissionsToUseTool("remember", input, "default", deny, true)).toBe("deny");
   });
 
   // ── SkillTool（V6 技能加载）──
@@ -823,7 +830,7 @@ describe("hasPermissionsToUseTool plan 分支（V5 决策 A1）", () => {
   const readOnlyPlusExplore = (name: string) =>
     ["read_file", "glob", "grep", "repo_map", "explore"].includes(name);
 
-  it("plan 下：写/改/run_bash/remember → deny", () => {
+  it("plan 下：写/改/run_bash deny；remember 未 Trust deny（Trusted 由 4.6 豁免 allow）", () => {
     const dir = workdir();
     expect(
       hasPermissionsToUseTool("write_file", { file_path: "a.ts" }, "plan", RULES, false, dir),
@@ -834,9 +841,13 @@ describe("hasPermissionsToUseTool plan 分支（V5 决策 A1）", () => {
     expect(
       hasPermissionsToUseTool("run_bash", { command: "ls -la" }, "plan", RULES, false, dir),
     ).toBe("deny");
+    // 未 Trust → plan 兜底 deny；Trusted → 4.6 记忆写豁免在 plan 下也 allow
     expect(
       hasPermissionsToUseTool("remember", { content: "记住 x" }, "plan", RULES, false, dir),
     ).toBe("deny");
+    expect(
+      hasPermissionsToUseTool("remember", { content: "记住 x" }, "plan", RULES, true, dir),
+    ).toBe("allow");
   });
 
   it("plan 下：内置危险命令仍 deny（步骤 1 先于 plan 分支）", () => {

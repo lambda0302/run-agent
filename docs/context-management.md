@@ -23,9 +23,13 @@
 - **只读直读**：记忆用文件系统直接读取（剥 BOM、≤32KB），不走工具。agent 无法用 `write_file`/`edit_file`
   改 `.run-agent/CLAUDE.md`，`run_bash` 命令里引用 `.run-agent` 路径段同样被内置 deny 收口
   ——记忆目录对 agent 完全只读，这是安全特性。
-- **`--bare`**：`run-agent --bare` 禁用全部记忆与动态上下文注入（system 为 undefined）。
-- 记忆注入在 system 的**稳定段**（角色准则 + 记忆），日期/git 在**动态段**——动态在后的顺序保住
-  prompt cache 的稳定前缀复用。
+- **`--bare`**：`run-agent --bare` 禁用全部记忆与动态上下文注入（system 为 undefined，也不插入动态消息）。
+- **稳定/动态边界（V8.3）**：system prompt 只保留**字节稳定**部分（角色准则 + CLAUDE.md 记忆 +
+  MEMORY.md 索引）；时间戳 / 工作目录 / git / plan 引导 / MCP·skills 清单 / Stop hook 输出等
+  **全部动态上下文**由 `buildDynamicContext` 产出，REPL / one-shot 每轮作为独立 user 消息
+  （前缀标记 `DYNAMIC_CONTEXT_MARKER`）插在**用户 query 之前**。system 前缀一字节不变 →
+  DeepSeek 自动前缀缓存从 token 0 命中；动态块在缓存点之后追加，不影响前缀。动态消息随会话
+  持久化，resume 后下一轮自动清理旧快照并插入新的。
 
 ### 写入记忆：`remember` 工具（0.3.2）
 

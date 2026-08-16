@@ -88,7 +88,7 @@ agent 工具在继承父级 `checkPermission` 时包一层注入 `子 agent: <�
 ## 运行方式
 
 ```bash
-run-agent --coordinator     # 注入协调者 system 段落，进入编排模式
+run-agent --coordinator     # 动态上下文块注入协调者段落，进入编排模式
 run-agent --coordinator "重构这个模块，拆成可并行任务派发"
 run-agent                    # 不加 --coordinator：模型仍可手动调 agent 工具，但无协调者引导
 ```

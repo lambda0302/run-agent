@@ -2,9 +2,9 @@
  * V3 权限判定引擎（零依赖，纯函数）。
  * 判定顺序（V4.5 决策 D 演进 + V5 决策 A1 加 plan 分支 + V7.5 收口前置单线管线 + V8 决策 G2 plan 文件豁免）：
  *   用户 deny（P3：先于一切内置放行，含导航工具）→ 内置危险命令（classify dangerous）
- *   → 命令文本危险段（.run-agent/.git/.claude，/i）→ 记忆读专属通道 → plan 文件豁免
- *   → 路径危险段（P1：plan 下也跑）→ plan 分支（强制只读，读侧与 default 共享）→ 导航工具
- *   → 用户 allow → 白名单(cwd) → 兜底 ask。
+ *   → 命令文本危险段（.run-agent/.git/.claude，/i）→ 记忆读专属通道 → 记忆写专属通道（remember）
+ *   → plan 文件豁免 → 路径危险段（P1：plan 下也跑）→ plan 分支（强制只读，读侧与 default 共享）
+ *   → 导航工具 → 用户 allow → 白名单(cwd) → 兜底 ask。
  * 对齐 Claude Code 的 hasPermissionsToUseTool 混合模型，但更保守：公开项目误拦比漏拦安全。
  */
 import { realpathSync } from "node:fs";
@@ -332,7 +332,8 @@ function ruleMatches(
 }
 
 /** P2 收窄：acceptEdits 只预授权 cwd 内的路径写工具（write_file/edit_file）。
- *  无路径工具（remember）、MCP 写工具、其它有路径工具在 acceptEdits 下不再无条件放行。 */
+ *  无路径工具（remember 已由第 4.6 步豁免）、MCP 写工具、其它有路径工具在 acceptEdits 下
+ *  不再无条件放行。 */
 const PATH_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
 
 /**
@@ -345,14 +346,15 @@ const PATH_WRITE_TOOLS = new Set(["write_file", "edit_file"]);
  *   4.5. plan 文件豁免（精确文件 + plan 模式，write/edit/read 该文件）→ allow（V8 决策 G2）
  *   5. 路径危险段（.git/.claude/.run-agent，未豁免）→ deny（P1：plan 下也跑）
  *   6. plan 分支：enter_plan_mode allow / exit_plan_mode ask / 只读 cwd 内 allow、cwd 外 ask /
- *      MCP 外部工具 ask（黑盒，用户显式确认）/ 写·执行·remember deny（读侧与 default 共享，见 3-5）
+ *      MCP 外部工具 ask（黑盒，用户显式确认）/ 写·执行 deny（读侧与 default 共享，见 3-5；
+ *      remember 已由 4.6 步前置豁免，未 Trust 时在此被拒）
  *   7. 导航工具（非 plan）免确认（enter/exit_plan_mode）
  *   8. 用户 allow 规则 → allow（cwd 外访问的唯一授权通道；对 cwd 内保留"始终允许"语义）
  *   9. 白名单 + 模式兜底：run_bash 按 classify——readonly 自动 allow、其余 ask
  *      （acceptEdits 不放行 bash）；Windows 可疑路径 → ask；无路径工具 readOnlyNames → allow
  *      否则 ask（P2：acceptEdits 不再放行）；cwd 内 readOnly → allow / acceptEdits 仅
  *      write_file·edit_file → allow / default 写 ask；cwd 外 → 只读也 ask
- * @param isTrusted 记忆读豁免的 Trust 门控；缺省 false（未传 = 无豁免）。
+ * @param isTrusted 记忆读/写豁免（4 / 4.6 步）的 Trust 门控；缺省 false（未传 = 无豁免）。
  * @param cwd 工作目录白名单边界；缺省 process.cwd()。
  * @param planFilePath V8 决策 G：当前 plan 会话的计划文件绝对路径（REPL 经 ctx 传入；
  *  缺省 undefined = 无 plan 文件豁免，现有行为不变）。
@@ -388,6 +390,13 @@ export function hasPermissionsToUseTool(
   if (forms && forms.every((f) => isMemoryReadExempt(tool, f, isTrusted))) {
     return "allow";
   }
+
+  // 4.6 记忆写专属通道（remember）：工具 schema 无路径入参——写目标 `.run-agent/memory/` 在工具
+  //    内部由注入 cwd 硬编码计算（模型无法改指任意路径），与读豁免（第 4 步）对称。Trust 门控
+  //    allow：default/acceptEdits/plan **全模式**放行（V8 决策，用户拍板——记忆沉淀是 meta 动作，
+  //    不算 plan 的"项目变更"）。用户 deny（第 1 步）仍最高；未 Trust 无豁免（fallthrough 到
+  //    plan 分支/第 9 步兜底 ask，工具内部 writeProjectMemory 同样拒绝）。
+  if (tool === "remember" && isTrusted) return "allow";
 
   // 4.5 V8 决策 G2：plan 文件豁免——精确文件 + 仅 plan 模式，比记忆读豁免更窄
   //    （只放开这一个文件，不放大 `.run-agent/**` 写禁令）。放在路径危险段（第 5 步）
@@ -426,7 +435,7 @@ export function hasPermissionsToUseTool(
       if (pathInCwd(p, cwd)) return "allow";
       return "ask";
     }
-    // 其余（写类 / run_bash / remember / 未知外部工具）→ deny
+    // 其余（写类 / run_bash / 未知外部工具）→ deny（remember 未 Trust 时在此被拒）
     return "deny";
   }
 
@@ -448,11 +457,11 @@ export function hasPermissionsToUseTool(
   }
   if (p && forms && forms.some((f) => suspiciousOutsideCwd(f, cwd))) return "ask";
   if (!p) {
-    // 无路径入参的工具（repo_map/explore/remember/glob 无 path 等）：不参与 cwd 边界。
+    // 无路径入参的工具（repo_map/explore/glob 无 path 等；remember 已由 4.6 步豁免）：不参与 cwd 边界。
     // 用 readOnlyNames（V5 决策 B4）而非硬编码 READ_ONLY_TOOLS：让 REPL/CLI 装配的扩展闭包
     // （协调者三件套 agent/send_message/task_stop + explore）在 default 下也免确认。
     // V8：MCP 工具不再并入——参数是 server 黑盒，三模式一律 ask（见 cli/index.ts readOnlyNames 注释）。
-    // P2：acceptEdits 不再无条件放行无路径工具（remember 等 → ask）。
+    // P2：acceptEdits 不再无条件放行无路径工具（glob 无 path 等 → ask；remember 走 4.6 步豁免）。
     if (readOnlyNames(tool)) return "allow";
     return "ask";
   }

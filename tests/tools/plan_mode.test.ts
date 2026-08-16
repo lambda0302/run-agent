@@ -196,10 +196,35 @@ describe("makePlanTools（V5 决策 A2/A3）", () => {
     await exit.call({ plan: "计划" });
     expect(box.state.mode).toBe("default");
 
-    // 已在 plan 再敲 /plan → false
+    // 已在 plan 再敲 /plan → enter 返回 false（进入被拒）
     expect(pt.enterPlanManually()).toBe(true);
     expect(box.state.mode).toBe("plan");
     expect(pt.enterPlanManually()).toBe(false);
+  });
+
+  it("/plan toggle：plan 下 exitPlanManually 恢复进入前模式；非 plan 是 no-op", async () => {
+    const box = modeBox("acceptEdits");
+    const pt = makePlanTools({ getMode: box.get, setMode: box.set, canPrompt: true });
+
+    // 非 plan：exit 是 no-op（mode 不变、返回 false）
+    expect(pt.exitPlanManually()).toBe(false);
+    expect(box.state.mode).toBe("acceptEdits");
+
+    // 进入 → 再敲 /plan 退出：恢复进入前的 acceptEdits（不经 exit_plan_mode 审批）
+    expect(pt.enterPlanManually()).toBe(true);
+    expect(box.state.mode).toBe("plan");
+    expect(pt.exitPlanManually()).toBe(true);
+    expect(box.state.mode).toBe("acceptEdits");
+
+    // 退出后再 exit → 又回到 no-op
+    expect(pt.exitPlanManually()).toBe(false);
+    expect(box.state.mode).toBe("acceptEdits");
+
+    // toggle 后重新进入仍正常（prePlanMode 随新进入刷新）
+    expect(pt.enterPlanManually()).toBe(true);
+    expect(box.state.mode).toBe("plan");
+    expect(pt.exitPlanManually()).toBe(true);
+    expect(box.state.mode).toBe("acceptEdits");
   });
 });
 

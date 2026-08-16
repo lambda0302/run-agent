@@ -329,7 +329,7 @@ server 用 `/mcp connect <name>` 手动重连（MCP 工具与内置工具走同�
 - **Trust 信任边界**（V2）：只有受信任的项目才加载 `.run-agent/permissions.json` / `.run-agent/mcp.json`，防提示注入
 - **流式即时执行**（0.5.0）：工具边流式边并行执行（不必等响应完结），只读并行（上限 10）/ 写串行、结果按原顺序回填
 - **16 个内置工具**：`read_file` · `write_file` · `edit_file`（精确替换）· `glob` · `grep` · `run_bash`（跨平台，超时+输出截断）· `remember`（写入长期记忆）· `repo_map`（两遍排序定位）· `explore`（只读探索子 agent）· `agent`（委派子任务）· `send_message` / `task_stop`（协调者三件套）· `enter_plan_mode` / `exit_plan_mode`（Plan 导航）· `SkillTool`（V6，加载技能）+ 配置 MCP 时的动态 MCP 工具
-- **Hooks**（0.6.0）：五类事件（`PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `Stop`）挂 shell 命令或 HTTP 回调，配置 `settings.json`（用户级 + Trust 项目级）；`PreToolUse` 可返回 `permissionDecision` 覆盖判定（engine deny 硬底线不可放行），`Stop` 输出注入下一轮 system；详见 [docs/hooks.md](docs/hooks.md)
+- **Hooks**（0.6.0）：五类事件（`PreToolUse` / `PostToolUse` / `SessionStart` / `SessionEnd` / `Stop`）挂 shell 命令或 HTTP 回调，配置 `settings.json`（用户级 + Trust 项目级）；`PreToolUse` 可返回 `permissionDecision` 覆盖判定（engine deny 硬底线不可放行），`Stop` 输出注入下一轮动态上下文块；详见 [docs/hooks.md](docs/hooks.md)
 - **Skills**（0.6.0）：预写专业工作流（`SKILL.md`，frontmatter `name`/`description`/`allowed-tools`），模型用 `SkillTool` 加载执行、或 REPL `/技能名` 直接触发；技能 body 调用时才加载（不塞 token），`allowed-tools` 限制工具（内置只读始终保留）；详见 [docs/skills.md](docs/skills.md)
 - **自定义命令**（0.6.0）：`.md` 模板（`@file` 内联 + 参数追加，走 agent 循环）或 `.py/.js/.ts` 脚本（解释器直跑，注入 `RUN_AGENT_CWD`/`RUN_AGENT_PROMPT`），REPL `/命令名` 触发；详见 [docs/commands.md](docs/commands.md)
 - **Headless**（0.6.0）：`--print <prompt>` 跑一次即退，`--json` 输出结构化结果（stdout 纯 JSON、人类日志去 stderr、工具轨迹含权限判定与截断、退出码 0/1），`--max-turns` 限轮数——可编程调用、对接 CI / 脚本；详见 [docs/usage.md](docs/usage.md#headlessprint--json)

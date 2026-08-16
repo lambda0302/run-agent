@@ -8,6 +8,7 @@
  * 提取子 agent = extractMemories 类型,直接 runAgent(独立执行路径,不入 task registry / awaitAll)。
  */
 import type { LLMClient, LLMMessage } from "../../providers/types.js";
+import type { PermissionRule } from "../../permissions/types.js";
 import { runAgent } from "../../core/run_agent.js";
 import { buildMemoryIndexBlock, memoryDirPath } from "../../core/memory.js";
 import {
@@ -29,6 +30,8 @@ export interface ExtractEngineOptions {
   isTrusted: boolean;
   bare: boolean;
   client: LLMClient;
+  /** 会话权限规则(用户级 + Trust 项目级 permissions.json)——提取子 agent 读权限沿主引擎管线判定。 */
+  rules: PermissionRule[];
   /** 父级工具池 getter(read_file/glob/grep/remember,remember 已注入 cwd/isTrusted)。 */
   parentTools: () => Tool[];
   contextWindow?: number;
@@ -121,7 +124,11 @@ export class ExtractMemoriesEngine {
         client,
         tools: extractMemoriesDef.resolveTools(this.opts.parentTools),
         system: EXTRACT_MEMORY_SYSTEM,
-        checkPermission: makeExtractMemCheckPermission(this.opts.isTrusted),
+        checkPermission: makeExtractMemCheckPermission(
+          this.opts.isTrusted,
+          this.opts.cwd,
+          this.opts.rules,
+        ),
         ...(extractMemoriesDef.maxIterations !== undefined
           ? { maxIterations: extractMemoriesDef.maxIterations }
           : {}),

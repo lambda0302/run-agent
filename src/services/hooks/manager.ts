@@ -6,7 +6,7 @@
  *     engine deny 是硬底线不可被放行（决策 A4，强制在 makeCheckPermission 层）。
  *   - PostToolUse：工具执行完成后（成功/失败都触发，结果含错误文本）。
  *   - SessionStart / SessionEnd：会话边界。
- *   - Stop：每轮 runQuery 结束，stdout 注入下一轮 system（决策 A1）。
+ *   - Stop：每轮 runQuery 结束，stdout 注入下一轮动态上下文块（决策 A1；V8.3 起在 messages）。
  *
  * 命令经 stdin 收 JSON 输入、stdout 回 JSON/文本；http 是 POST JSON body。
  * 所有 hook 有超时兜底（默认 30s），失败/超时绝不阻断主流程。
@@ -264,7 +264,7 @@ export class HookManager {
   }
 
   /**
-   * Stop：每轮 runQuery 结束触发，带最终回复；返回值（合并输出）供注入下一轮 system。
+   * Stop：每轮 runQuery 结束触发，带最终回复；返回值（合并输出）供注入下一轮动态上下文块。
    * 单条输出有上限，防 hook 输出灌爆上下文。
    */
   async onStop(reply: string): Promise<string | undefined> {

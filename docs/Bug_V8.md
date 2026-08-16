@@ -2,7 +2,7 @@
 
 > 阶段：2026-08-13 ~ 2026-08-15 ｜ 交付：`0.8.0`（权限重构——run_bash 六分类 + 判定链收口前置单线）+ `0.8.1`（会话持久化 + 会话切换 + verify 移除，已发布 v0.8.1）。
 > 来源：会话记录、git 提交 `3909e1b`（0.8.0 CI 跨平台修复）/ `9945887`（0.8.1 主体）、CI 9 job 暴露、CHANGELOG [0.8.0]/[0.8.1]、Plan_V8.md §2。
-> **V8 共记录 5 个已解决 bug + 2 个待修开放项。** 集中在「跨平台 / REPL 交互 / 会话展示」三条线。
+> **V8 共记录 6 个已解决 bug + 1 个待修开放项。** 集中在「跨平台 / REPL 交互 / 会话展示 / 子 Agent 权限」四条线。
 
 ## 总览
 
@@ -14,7 +14,7 @@
 | V8-4   | 会话时间直接 slice 文件名字戳（UTC）→ `--list`/`/sessions` 显示偏早 8 小时                              | 会话/展示    | 🟡 中  | ✅ 已解决       |
 | V8-5   | sanitizePath 测试用 Windows 路径字面量 → POSIX 拼 cwd 断言失败（CI 6 job 挂，Windows 侥幸通过）           | 测试/跨平台  | 🟠 高  | ✅ 已解决       |
 | V8-P1  | REPL 兜底抛错无接盘：compact 兜底链 `throw e` 成 unhandledRejection → Node 20+ 默认 throw，REPL 崩溃    | 可靠性/REPL  | 🟠 高  | ⏳ 待修         |
-| V8-P2  | 子 Agent 权限统一分析：extractMemories 只读三件套无条件 allow，绕过主引擎路径危险段判定（理论漏洞面）    | 权限/子Agent | 🟡 中  | 🤔 待整理（非 hotfix） |
+| V8-P2  | extractMemories 只读三件套无条件 allow，绕过主引擎路径危险段判定 → 改走主引擎管线（记忆豁免/cwd 内可读） | 权限/子Agent | 🟡 中  | ✅ 已解决（2026-08-16，待 commit） |
 
 ---
 
@@ -57,6 +57,14 @@
 - **修复**（`tests/utils/sessionStorage.test.ts`，测试-only）：输入改 `path.resolve("My", "Project")` 派生绝对路径，期望用同一路径 `replace(/[^a-zA-Z0-9]/g, "-")` 计算；超长用例改 `path.resolve("/", "a".repeat(300), "b".repeat(100))`，截断断言改 `/^[A-Za-z-]+$/`（平台无关）。发布 0.8.1 后才发现（首次推批次到 CI），npm 包不受影响（测试不进 `files:["dist"]`）。
 - **教训**：与 V8-1 同族——测试里不能把 Windows 盘符路径当绝对路径喂给 `path.resolve`/`sessionsDir` 等解析函数。凡是路径入参，先 `path.resolve` 再断言，否则 POSIX 静默拼 cwd。
 
+### V8-P2（中）extractMemories 只读三件套无条件 allow → 改走主引擎管线
+
+- **现象**：extractMemories 子 agent 的 `makeExtractMemCheckPermission` 对 `read_file`/`glob`/`grep` **无条件 allow**，绕过主权限引擎的路径危险段判定（`.git`/`.claude`/`.run-agent`）；而 `src/tools/read.ts` 的 read_file 工具本身**零路径校验**——安全完全依赖 checkPermission。
+- **风险面**：增量消息夹带的提示注入可诱导提取器读任意敏感路径（`~/.ssh/id_rsa`、`.env` 等）。旧缓解仅 Trust 门控 + 4 工具白名单。
+- **修复**（`src/services/agents/builtin/extractMemories.ts`，2026-08-16，待 commit）：`makeExtractMemCheckPermission(isTrusted, cwd, rules)` 不再对只读三件套无条件放行，改走主引擎单线管线 `hasPermissionsToUseTool`（default 模式）——记忆读豁免（`.run-agent/memory/**`·Trust）、路径危险段、cwd 边界、Windows 可疑路径、用户 deny/allow 规则**全部生效**；后台无交互，engine 的 ask 一律降级 deny → 只读范围收敛为「记忆目录 + 项目内」。装配：`ExtractEngineOptions` 加 `rules`（CLI 透传 `ctx.rules`，用户级 + Trust 项目级），def 移除静态 `checkPermission` 字段（extract.ts 触发时现配）。
+- **测试**：路径相关断言矩阵（记忆豁免 allow / cwd 内 allow / 无路径 allow / 危险段 deny / cwd 外 deny / 用户 deny 规则生效 / 未 Trust 无豁免 / 永不 ask）。
+- **教训**：子 agent 的类型级权限策略必须与主引擎共享同一判定管线——自定义策略一旦引入「无条件 allow」，就失去了引擎的路径/危险段防线；工具自身的零校验更要求权限层严格。
+
 ---
 
 ## 二、待修开放项
@@ -68,9 +76,3 @@
 - **修复方向**：给 REPL 的 turn 加顶层 catch（渲染红字错误 + 保留 REPL 存活 + 恢复 `promptLine`），或注册全局 `unhandledRejection` 兜底。修复后更新本条状态与 commit。
 - **记录在**：`docs/Plan_V8.md` §2 待修清单。
 
-### V8-P2（中）子 Agent 权限统一分析（理论漏洞面）
-
-- **现象**：extractMemories 子 agent 的 `makeExtractMemCheckPermission`（`src/services/agents/builtin/extractMemories.ts:37-51`）对 `read_file`/`glob`/`grep` **无条件 allow**，绕过主权限引擎的路径危险段判定；而 `src/tools/read.ts:30` 的 read_file 工具本身**零路径校验**——安全完全依赖 checkPermission。
-- **风险面**：增量消息夹带的提示注入可诱导提取器读任意敏感路径。当前缓解仅靠 Trust 门控 + 4 工具白名单。
-- **推迟原因**（非 hotfix）：与子 Agent 系统相关，待整理子 Agent 系统时把 extractMemories / explore / verification / 自定义类型**所有内置子 agent 的权限统一分析和控制**（只读 allow 范围、路径白名单），不单独修。
-- **记录在**：`docs/Plan_V8.md` §2 待整理清单 + 记忆索引。

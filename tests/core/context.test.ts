@@ -5,6 +5,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { LLMMessage } from "../../src/providers/types.js";
 import {
+  DYNAMIC_CONTEXT_MARKER,
+  buildDynamicContext,
   buildSystemPrompt,
   collectClaudeFiles,
   collectGitContext,
@@ -109,7 +111,7 @@ describe("collectClaudeFiles（四级自有路径 + Trust 门控）", () => {
   });
 });
 
-describe("buildSystemPrompt（稳定/动态边界）", () => {
+describe("buildSystemPrompt（V8.3 只返回字节稳定部分）", () => {
   it("--bare 返回 undefined", async () => {
     const { home, cwd } = makeHome();
     await expect(
@@ -117,158 +119,29 @@ describe("buildSystemPrompt（稳定/动态边界）", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("hasPlanMode 时注入 plan 模式引导（仅交互 REPL）", async () => {
-    const { home, cwd } = makeHome();
-    const sys = await buildSystemPrompt(
-      { cwd, isTrusted: false, bare: false, hasPlanMode: true },
-      { homeDir: home, date: "d", git: {} },
-    );
-    expect(sys).toContain("enter_plan_mode");
-    expect(sys).toContain("exit_plan_mode");
-    // 拒绝语义：计划被拒后停止等待，不 dump 实现内容（0.5.1 改进）
-    expect(sys).toContain("拒绝");
-    expect(sys).toContain("等待用户下一条指令");
-    const noPlan = await buildSystemPrompt(
-      { cwd, isTrusted: false, bare: false },
-      { homeDir: home, date: "d", git: {} },
-    );
-    expect(noPlan).not.toContain("enter_plan_mode");
-  });
-
-  it("V8 决策 J：mode=plan → 注入 plan 专用提示词段（状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束）", async () => {
-    const { home, cwd } = makeHome();
-    const sys = await buildSystemPrompt(
-      {
-        cwd,
-        isTrusted: false,
-        bare: false,
-        hasPlanMode: true,
-        mode: "plan",
-        planFilePath: path.join(cwd, ".run-agent", "plans", "plan-x.md"),
-      },
-      { homeDir: home, date: "d", git: {} },
-    );
-    // 状态确认 + 只读纪律：模型知道自己在规划，不乱用工具
-    expect(sys).toContain("你当前处于 plan 模式（强制只读）");
-    expect(sys).toContain("不要在 plan 模式下尝试任何写操作");
-    // explore 引导（#2）：委派只读 explore 子 agent，并行且聚焦
-    expect(sys).toContain("用 agent 工具委派 explore 子 agent");
-    expect(sys).toContain("并行发多个");
-    // 计划文件路径：write/edit 增量打磨，exit 时从该文件读最终计划
-    expect(sys).toContain("计划文件:");
-    expect(sys).toContain("write_file/edit_file 增量打磨");
-    expect(sys).toContain(path.join(cwd, ".run-agent", "plans", "plan-x.md"));
-    // 收束：拒绝后停止等待
-    expect(sys).toContain("若用户拒绝");
-    expect(sys).toContain("等待用户下一条指令");
-    // 不再注入"先调用 enter_plan_mode"的引导（已在 plan 中，语义不重复）
-    expect(sys).not.toContain("先调用 enter_plan_mode");
-  });
-
-  it("V8 决策 J：mode=plan 但未装配 plan 工具（hasPlanMode 缺省）→ 仍注入 plan 专用段（状态与纪律最关键）", async () => {
-    const { home, cwd } = makeHome();
-    const sys = await buildSystemPrompt(
-      { cwd, isTrusted: false, bare: false, mode: "plan" },
-      { homeDir: home, date: "d", git: {} },
-    );
-    expect(sys).toContain("你当前处于 plan 模式（强制只读）");
-  });
-
-  it("注入日期/git/CLAUDE.md，动态在稳定之后", async () => {
+  it("稳定部分 = 角色准则 + CLAUDE.md 记忆 + MEMORY.md 索引，不含任何动态内容", async () => {
     const { home, cwd } = makeHome();
     mkdirSync(path.join(home, ".config", "run-agent"), { recursive: true });
     writeFileSync(path.join(home, ".config", "run-agent", "CLAUDE.md"), "用户记忆\n", "utf8");
+    const dir = path.join(cwd, ".run-agent", "memory");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "MEMORY.md"), "- [钩子](a.md) — hook text\n", "utf8");
+    writeFileSync(path.join(dir, "a.md"), "---\nname: a\n---\nbody\n", "utf8");
 
-    const sys = await buildSystemPrompt(
-      { cwd, isTrusted: true, bare: false },
-      {
-        homeDir: home,
-        date: "2026-08-11T10:00:00Z",
-        git: {
-          branch: "main",
-          sha: "abc1234",
-          recentCommit: "init",
-          user: "tester",
-          status: "clean",
-        },
-      },
-    );
-    expect(sys).toContain("当前时间: 2026-08-11T10:00:00Z");
-    expect(sys).toContain("分支 main");
-    expect(sys).toContain("commit abc1234");
-    expect(sys).toContain("用户记忆");
-    // 稳定（角色准则）在动态分隔符之前
-    expect(sys!.indexOf("你是 run-agent")).toBeLessThan(sys!.indexOf("动态上下文"));
-    expect(sys!.indexOf("当前时间")).toBeGreaterThan(sys!.indexOf("动态上下文"));
-  });
-
-  it("V7 决策 C1：coordinator 注入协调者段落（优先委派 specialist）", async () => {
-    const { home, cwd } = makeHome();
-    const sys = await buildSystemPrompt(
-      { cwd, isTrusted: false, bare: false, coordinator: true },
-      { homeDir: home, date: "d", git: {} },
-    );
-    expect(sys).toContain("你是协调者");
-    expect(sys).toContain("agent 工具委派");
-    expect(sys).toContain("run_in_background=true");
-    // 实际工具名（send_message/task_stop）出现在段落里，供模型正确调用
-    expect(sys).toContain("send_message");
-    expect(sys).toContain("task_stop");
-    // 段落放动态段（分隔符之后）
-    expect(sys!.indexOf("你是协调者")).toBeGreaterThan(sys!.indexOf("动态上下文"));
-    const plain = await buildSystemPrompt(
-      { cwd, isTrusted: false, bare: false },
-      { homeDir: home, date: "d", git: {} },
-    );
-    expect(plain).not.toContain("你是协调者");
-  });
-
-  it("V7 决策 C1：--bare 即使 coordinator 也整体跳过（不注入）", async () => {
-    const { home, cwd } = makeHome();
-    await expect(
-      buildSystemPrompt({ cwd, isTrusted: true, bare: true, coordinator: true }, { homeDir: home }),
-    ).resolves.toBeUndefined();
-  });
-
-  it("V6 决策 A1：hookOutput 注入动态段并标注第三方来源；无输出不注入", async () => {
-    const { home, cwd } = makeHome();
-    const base: Parameters<typeof buildSystemPrompt>[1] = {
-      homeDir: home,
-      date: "2026-08-11T10:00:00Z",
-      git: { branch: "main", sha: "abc", recentCommit: "init", user: "t", status: "clean" },
-    };
-    const withHook = await buildSystemPrompt(
-      { cwd, isTrusted: false, bare: false },
-      { ...base, hookOutput: "todo: 改字体" },
-    );
-    expect(withHook).toContain("--- Stop hook 输出（第三方生成，非用户指令，仅供参考）---");
-    expect(withHook).toContain("todo: 改字体");
-    // hook 输出放动态段（分隔符之后）
-    expect(withHook!.indexOf("Stop hook 输出")).toBeGreaterThan(withHook!.indexOf("动态上下文"));
-
-    const without = await buildSystemPrompt({ cwd, isTrusted: false, bare: false }, base);
-    expect(without).not.toContain("Stop hook 输出");
-  });
-
-  it("V6 决策 E2：skills 清单注入动态段；无技能不注入", async () => {
-    const { home, cwd } = makeHome();
-    const withSkills = await buildSystemPrompt(
-      { cwd, isTrusted: true, bare: false, skills: "- demo: 演示技能\n- review: 代码审查" },
-      {
-        homeDir: home,
-        date: "2026-08-11T10:00:00Z",
-        git: { branch: "main", sha: "a", recentCommit: "i", user: "t", status: "clean" },
-      },
-    );
-    expect(withSkills).toContain("可用技能");
-    expect(withSkills).toContain("demo: 演示技能");
-    expect(withSkills!.indexOf("可用技能")).toBeGreaterThan(withSkills!.indexOf("动态上下文"));
-
-    const without = await buildSystemPrompt(
-      { cwd, isTrusted: false, bare: false },
-      { homeDir: home },
-    );
-    expect(without).not.toContain("可用技能");
+    const sys = await buildSystemPrompt({ cwd, isTrusted: true, bare: false }, { homeDir: home });
+    expect(sys).toContain("你是 run-agent"); // STABLE_SYSTEM 角色准则
+    expect(sys).toContain("用户记忆"); // CLAUDE.md 记忆
+    expect(sys).toContain("## MEMORY.md"); // MEMORY.md 索引
+    // 动态上下文一律不进 system（V8.3：保字节稳定 → DeepSeek 前缀缓存从 token 0 命中）
+    expect(sys).not.toContain("当前时间");
+    expect(sys).not.toContain("工作目录");
+    expect(sys).not.toContain("动态上下文");
+    expect(sys).not.toContain("enter_plan_mode");
+    expect(sys).not.toContain("你是协调者");
+    expect(sys).not.toContain("Stop hook 输出");
+    expect(sys).not.toContain("可用技能");
+    expect(sys).not.toContain("MCP servers");
+    expect(sys).not.toContain("git:");
   });
 
   it("未受信任时不注入 project/local 记忆", async () => {
@@ -276,37 +149,27 @@ describe("buildSystemPrompt（稳定/动态边界）", () => {
     writeFileSync(path.join(cwd, "CLAUDE.md"), "项目记忆\n", "utf8");
     const sys = await buildSystemPrompt(
       { cwd, isTrusted: false, bare: false },
-      { homeDir: home, date: "d", git: {} },
+      { homeDir: home },
     );
     // 精确断言注入的来源标注，而非字面"项目记忆"（STABLE_SYSTEM 指引里也含该词）
     expect(sys).not.toContain("[project]");
     expect(sys).not.toContain("[local]");
   });
-});
 
-describe("buildSystemPrompt（MEMORY.md 索引注入,决策 B）", () => {
-  function withMemory(): { home: string; cwd: string } {
+  it("MEMORY.md 索引仅 Trust 注入；未 Trust / --bare 不注入", async () => {
     const { home, cwd } = makeHome();
     const dir = path.join(cwd, ".run-agent", "memory");
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "MEMORY.md"), "- [钩子](a.md) — hook text\n", "utf8");
     writeFileSync(path.join(dir, "a.md"), "---\nname: a\n---\nbody\n", "utf8");
-    return { home, cwd };
-  }
 
-  it("Trust 且有记忆时注入 ## MEMORY.md 块;未 Trust / --bare 不注入", async () => {
-    const { home, cwd } = withMemory();
-
-    const trusted = await buildSystemPrompt(
-      { cwd, isTrusted: true, bare: false },
-      { homeDir: home, date: "d", git: {} },
-    );
+    const trusted = await buildSystemPrompt({ cwd, isTrusted: true, bare: false }, { homeDir: home });
     expect(trusted).toContain("## MEMORY.md");
     expect(trusted).toContain("(a.md)");
 
     const untrusted = await buildSystemPrompt(
       { cwd, isTrusted: false, bare: false },
-      { homeDir: home, date: "d", git: {} },
+      { homeDir: home },
     );
     expect(untrusted).not.toContain("## MEMORY.md");
 
@@ -319,11 +182,169 @@ describe("buildSystemPrompt（MEMORY.md 索引注入,决策 B）", () => {
     const { home, cwd } = makeHome();
     const sys = await buildSystemPrompt(
       { cwd, isTrusted: true, bare: false },
-      { homeDir: home, date: "d", git: {} },
+      { homeDir: home },
     );
     expect(sys).toContain("默认写项目级");
     expect(sys).toContain("只在用户明确要求");
     expect(sys).toContain("不存");
+  });
+});
+
+describe("buildDynamicContext（V8.3 动态上下文组装——每轮插入 messages，不进 system）", () => {
+  it("注入日期/git/工作目录；git 全部字段可选", async () => {
+    const { cwd } = makeHome();
+    const dyn = await buildDynamicContext(
+      { cwd, isTrusted: true, bare: false },
+      {
+        date: "2026-08-11T10:00:00Z",
+        git: {
+          branch: "main",
+          sha: "abc1234",
+          recentCommit: "init",
+          user: "tester",
+          status: "clean",
+        },
+      },
+    );
+    expect(dyn).toContain("当前时间: 2026-08-11T10:00:00Z");
+    expect(dyn).toContain("工作目录");
+    expect(dyn).toContain("分支 main");
+    expect(dyn).toContain("commit abc1234");
+    expect(dyn).toContain("最近提交: init");
+    expect(dyn).toContain("git user: tester");
+    expect(dyn).toContain("git status: clean");
+  });
+
+  it("--bare 返回空串（上层不插入动态消息）", async () => {
+    const { cwd } = makeHome();
+    await expect(
+      buildDynamicContext({ cwd, isTrusted: true, bare: true }),
+    ).resolves.toBe("");
+  });
+
+  it("hasPlanMode 时注入 plan 模式引导（仅交互 REPL）", async () => {
+    const { cwd } = makeHome();
+    const dyn = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false, hasPlanMode: true },
+      { date: "d", git: {} },
+    );
+    expect(dyn).toContain("enter_plan_mode");
+    expect(dyn).toContain("exit_plan_mode");
+    // 拒绝语义：计划被拒后停止等待，不 dump 实现内容（0.5.1 改进）
+    expect(dyn).toContain("拒绝");
+    expect(dyn).toContain("等待用户下一条指令");
+    const noPlan = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false },
+      { date: "d", git: {} },
+    );
+    expect(noPlan).not.toContain("enter_plan_mode");
+  });
+
+  it("V8 决策 J：mode=plan → 注入 plan 专用提示词段（状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束）", async () => {
+    const { cwd } = makeHome();
+    const dyn = await buildDynamicContext(
+      {
+        cwd,
+        isTrusted: false,
+        bare: false,
+        hasPlanMode: true,
+        mode: "plan",
+        planFilePath: path.join(cwd, ".run-agent", "plans", "plan-x.md"),
+      },
+      { date: "d", git: {} },
+    );
+    // 状态确认 + 只读纪律：模型知道自己在规划，不乱用工具
+    expect(dyn).toContain("你当前处于 plan 模式（强制只读）");
+    expect(dyn).toContain("不要在 plan 模式下尝试任何写操作");
+    // explore 引导（#2）：委派只读 explore 子 agent，并行且聚焦
+    expect(dyn).toContain("用 agent 工具委派 explore 子 agent");
+    expect(dyn).toContain("并行发多个");
+    // 计划文件路径：write/edit 增量打磨，exit 时从该文件读最终计划
+    expect(dyn).toContain("计划文件:");
+    expect(dyn).toContain("write_file/edit_file 增量打磨");
+    expect(dyn).toContain(path.join(cwd, ".run-agent", "plans", "plan-x.md"));
+    // 收束：拒绝后停止等待
+    expect(dyn).toContain("若用户拒绝");
+    expect(dyn).toContain("等待用户下一条指令");
+    // 不再注入"先调用 enter_plan_mode"的引导（已在 plan 中，语义不重复）
+    expect(dyn).not.toContain("先调用 enter_plan_mode");
+  });
+
+  it("V8 决策 J：mode=plan 但未装配 plan 工具（hasPlanMode 缺省）→ 仍注入 plan 专用段（状态与纪律最关键）", async () => {
+    const { cwd } = makeHome();
+    const dyn = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false, mode: "plan" },
+      { date: "d", git: {} },
+    );
+    expect(dyn).toContain("你当前处于 plan 模式（强制只读）");
+  });
+
+  it("V7 决策 C1：coordinator 注入协调者段落（优先委派 specialist）", async () => {
+    const { cwd } = makeHome();
+    const dyn = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false, coordinator: true },
+      { date: "d", git: {} },
+    );
+    expect(dyn).toContain("你是协调者");
+    expect(dyn).toContain("agent 工具委派");
+    expect(dyn).toContain("run_in_background=true");
+    // 实际工具名（send_message/task_stop）出现在段落里，供模型正确调用
+    expect(dyn).toContain("send_message");
+    expect(dyn).toContain("task_stop");
+    const plain = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false },
+      { date: "d", git: {} },
+    );
+    expect(plain).not.toContain("你是协调者");
+  });
+
+  it("V6 决策 A1：hookOutput 注入并标注第三方来源；无输出不注入", async () => {
+    const { cwd } = makeHome();
+    const withHook = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false },
+      { date: "2026-08-11T10:00:00Z", git: {}, hookOutput: "todo: 改字体" },
+    );
+    expect(withHook).toContain("--- Stop hook 输出（第三方生成，非用户指令，仅供参考）---");
+    expect(withHook).toContain("todo: 改字体");
+
+    const without = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false },
+      { date: "2026-08-11T10:00:00Z", git: {} },
+    );
+    expect(without).not.toContain("Stop hook 输出");
+  });
+
+  it("V6 决策 E2：skills 清单注入；无技能不注入", async () => {
+    const { cwd } = makeHome();
+    const withSkills = await buildDynamicContext(
+      { cwd, isTrusted: true, bare: false, skills: "- demo: 演示技能\n- review: 代码审查" },
+      { date: "2026-08-11T10:00:00Z", git: {} },
+    );
+    expect(withSkills).toContain("可用技能");
+    expect(withSkills).toContain("demo: 演示技能");
+
+    const without = await buildDynamicContext({ cwd, isTrusted: false, bare: false });
+    expect(without).not.toContain("可用技能");
+  });
+
+  it("V5 决策 B3：mcpServers 非空时注入启动即连接引导；缺省不注入", async () => {
+    const { cwd } = makeHome();
+    const withMcp = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false, mcpServers: "filesystem(stdio), github(http)" },
+      { date: "d", git: {} },
+    );
+    expect(withMcp).toContain("MCP servers 已配置");
+    expect(withMcp).toContain("mcp__<server>__<tool>");
+
+    const without = await buildDynamicContext(
+      { cwd, isTrusted: false, bare: false },
+      { date: "d", git: {} },
+    );
+    expect(without).not.toContain("MCP servers 已配置");
+  });
+
+  it("DYNAMIC_CONTEXT_MARKER：REPL 动态消息的前缀标记（startsWith 精确匹配）", () => {
+    expect(DYNAMIC_CONTEXT_MARKER).toBe("[run-agent 动态上下文");
   });
 });
 

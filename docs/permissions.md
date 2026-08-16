@@ -31,9 +31,10 @@ CLI 可选两档：`default` / `acceptEdits`（`bypass` 已于 0.4.2 删除）�
 
 ### Plan 模式（0.5.0）
 
-`plan` 是**会话内动态模式**，只由 `enter_plan_mode` 进入、`exit_plan_mode` 退出（用户也可敲 `/plan`
-直接进入）。plan 下强制只读：写/改/执行类工具（`write_file` / `edit_file` / `run_bash` /
-`remember`）一律 deny；MCP 外部工具一律 ask（黑盒，用户显式确认）；只读工具 cwd 内放行、cwd 外 ask；
+`plan` 是**会话内动态模式**，由 `enter_plan_mode` 进入、`exit_plan_mode` 退出（用户也可敲 `/plan`
+直接进入——再敲一次直接退出、恢复进入前模式，0.8.2 起 `/plan` 是 toggle）。plan 下强制只读：写/改/执行类工具（`write_file` / `edit_file` / `run_bash` 等）一律
+deny（`remember` 记忆写豁免除外——第 4.6 步，Trust 门控下 plan 也放行）；MCP 外部工具一律 ask（黑盒，
+用户显式确认）；只读工具 cwd 内放行、cwd 外 ask；
 `enter_plan_mode` 自身放行、
 `exit_plan_mode` 放行（它的审批由 REPL 弹窗负责）。`exit_plan_mode` 把计划直写 `.run-agent/plans/`
 并弹 `y/n` 审批，批准后恢复进入前的模式（`prePlanMode`）。one-shot 不装配 plan 工具、无 `/plan`。
@@ -79,8 +80,9 @@ symlink 换名逃逸，并兼容 macOS `/var`→`/private/var` 之类的系统 s
 唯一的、有意的放宽：**Trust 会话内**，`read_file` / `glob` / `grep` 三个只读工具对
 `.run-agent/memory/**` **放行**——这是「索引 → 按需 read/grep 读记忆」的前提。
 未 Trust 会话豁免不生效，`.run-agent/memory/` 对 agent 完全不可见（同款 Trust 门控）。
-写记忆只能走 `remember` 工具（写类，走权限引擎）；`write_file`/`edit_file`/`run_bash` 对
-`.run-agent/**` 依旧全禁。
+写记忆只能走 `remember` 工具（**记忆写豁免**：Trust 门控下 default/acceptEdits/plan 全模式
+allow，engine 第 4.6 步——写目标硬编码、无路径入参可诱导，防护靠工具契约而非弹窗；
+用户 deny 规则仍最高）；`write_file`/`edit_file`/`run_bash` 对 `.run-agent/**` 依旧全禁。
 
 ## `run_bash` 六分类（影响半径）
 
@@ -117,10 +119,11 @@ symlink 换名逃逸，并兼容 macOS `/var`→`/private/var` 之类的系统 s
 2. **内置危险命令**（`classify` = `dangerous`）→ deny（任何规则/模式不可覆盖）
 3. **命令文本危险段**（`DENY_BASH_SEGMENTS_RE`：`.git`/`.claude`/`.run-agent`）→ deny
 4. **专属通道**（记忆读豁免）→ allow
+4.6. **专属通道**（记忆写豁免 `remember`，Trust 门控）→ allow（全模式含 plan）
 5. **路径危险段**（`.git`/`.claude`/`.run-agent` 段，小写化比较）→ deny
    ——**plan 下也跑**（危险段/记忆豁免在 plan 分支前统一处理，堵 plan 绕过）
 6. **plan 分支**：`enter_plan_mode` 放行 / `exit_plan_mode` ask / 只读工具 cwd 内放行、cwd 外
-   ask / 其余（写类、`run_bash`、`remember`、MCP 非只读）deny
+   ask / 其余（写类、`run_bash`、MCP 非只读；`remember` 未 Trust 时）deny
 7. **导航工具**（`enter_plan_mode`/`exit_plan_mode`）→ allow
 8. **用户 allow 规则** → allow（cwd 外访问的唯一授权通道；也可显式放行 `run_bash`）
 9. **白名单 + 模式兜底**：`run_bash` 按六分类分流（`readonly` allow / 其余 ask）；Windows 可疑

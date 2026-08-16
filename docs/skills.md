@@ -50,7 +50,8 @@ allowed-tools:
   3. 激活技能：本 turn 剩余可用工具 = `allowed-tools ∩ 工具池`（无 `allowed-tools` 则不限制）。
 - **body 惰性加载（渐进式披露，对齐 Claude Code）**：registry 只持有「frontmatter + 文件路径」，
   **启动不读 body**；`SkillTool` 调用 / `/技能名` 时才经 `readSkillBody` 从磁盘现读——内存不膨胀，
-  改 SKILL.md 无需重启即热更新。system 只注入「技能名 + 描述」清单（一行一个），body 不塞 token。
+  改 SKILL.md 无需重启即热更新。技能名 + 描述清单随**动态上下文块**注入（一行一个，V8.3 起在 messages、
+  不进 system，保 system 前缀字节稳定），body 不塞 token。
 - **只读工具**：`SkillTool` 无副作用（只回填文本），归内置只读——default 模式 / headless
   （`--print`）免确认直接 allow（否则 headless 无弹窗会降级 deny，技能加载全废）。
 - `SkillTool` 改变工具池状态 → 串行（`isConcurrencySafe: false`）。

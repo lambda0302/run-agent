@@ -5,14 +5,17 @@
 ## 它是什么
 
 Plan 模式是权限模式 `PermissionMode` 的一档**会话内动态状态**（`"plan"`），与 `default` / `acceptEdits` 并列。
-它不是 CLI 可选项（`--mode plan` 报非法值），只由两个入口进入、一个工具退出：
+它不是 CLI 可选项（`--mode plan` 报非法值），由两条路径进入、两条路径退出（共用同一状态机）：
 
-- **进入**（两条路径，共用同一状态机）：
+- **进入**：
   1. **模型驱动（主）**：模型调用 `enter_plan_mode` 工具（适合快模型不记得进 plan 时的兜底，见下 `/plan`）。
   2. **手动兜底（`/plan`）**：用户在 REPL 敲 `/plan` 直接进入，**不经模型判断**——弥补模型判断力不足。
-- **退出**：统一走 `exit_plan_mode`（用户批准是必经的一步，**不另设退出斜杠命令**）。
+- **退出**：
+  1. **审批退出（主）**：模型调用 `exit_plan_mode` → 用户审批（必经一步）。
+  2. **手动 toggle（`/plan`）**：plan 下再敲 `/plan` 直接退出，**恢复进入前的模式**——用户主动操作，
+     不经审批弹窗（0.8.2 起）。
 
-进入 plan 时记录进入前的权限模式（`prePlanMode`）；退出（审批通过）时恢复它。
+进入 plan 时记录进入前的权限模式（`prePlanMode`）；退出时恢复它。
 
 **计划文件前置（0.8.2）**：进入 plan 即确定计划文件路径 `<cwd>/.run-agent/plans/plan-<ts>.md`（首次写盘才建文件）。plan 期间模型可用 `write_file`/`edit_file` **增量打磨**该文件（引擎精确文件豁免，见下），`exit_plan_mode` 缺省读盘取最终计划——用户批准前就能看到/审改计划文件，而非批准瞬间才落盘。
 
@@ -32,6 +35,11 @@ plan 是**强制只读**态，判定优先级高于用户模式与用户规则�
 内置危险命令（`rm -rf /` 等）在 plan 分支之前先 deny——安全底线不因模式而放松。
 
 ## 退出与审批
+
+> **手动退出（`/plan` toggle，0.8.2）**：plan 下再敲 `/plan` = `exitPlanManually()` 直接
+> `setMode(prePlanMode)`——用户主动退出，**不经 exit_plan_mode 审批弹窗**。已写入盘的计划文件
+> 保留；未写入不补写。这是用户在模型卡住/改主意时的逃生门（REPL 只读态下唯一不依赖模型调用的
+> 退出路径；one-shot 不装配 `/plan`，无此门，但 one-shot 本就不进 plan）。
 
 `exit_plan_mode` 入参 `{ plan?: string }`（0.8.2 起可选）：
 
@@ -54,13 +62,14 @@ plan 是**强制只读**态，判定优先级高于用户模式与用户规则�
 
 - **one-shot 不装配** `enter_plan_mode` / `exit_plan_mode`，也没有 `/plan`：无审批弹窗时 `exit_plan_mode` 的 ask 必降级 deny，模型进 plan 就出不来（死锁）。不装配 = 模型根本没有入口。
 - `buildTools` 的 `planMode` 选项、REPL 的 `planMode` 选项都只在交互 REPL 装配。
-- system prompt 动态段只在装配了 plan 工具的会话注入引导（`SystemContext.hasPlanMode`）。
+- 动态上下文块（V8.3 起在 messages、随每轮用户 query 前插入；不再进 system）只在装配了 plan
+  工具的会话注入 plan 引导（`SystemContext.hasPlanMode`）。
 
 ## 工程细节
 
 - `enter_plan_mode` / `exit_plan_mode` 由 `src/tools/plan_mode.ts` 的 `makePlanTools` 工厂装配，注入 `getMode` / `setMode`（repl 闭包读写 `ctx.mode`）；`prePlanMode` 存工厂闭包（单会话单实例）。
-- `/plan` 命令调用同一工厂暴露的 `enterPlanManually()`——与 `enter_plan_mode` 共用 `prePlanMode`，两条进入路径行为完全一致。
+- `/plan` 命令调用同一工厂暴露的 `enterPlanManually()` / `exitPlanManually()`（toggle）——与 `enter_plan_mode` 共用 `prePlanMode`，进入/退出路径行为完全一致。
 - 判定在 `src/permissions/engine.ts` 的 plan 分支（危险命令检查之后、其余判定之前）；只读判定经 `hasPermissionsToUseTool` 第 7 参 `readOnlyNames`（缺省 = 内置只读集，REPL 并入 explore——不含 MCP，V8 起 MCP 外部工具 plan 下也 ask，先于只读判定）。
 - **计划文件豁免（0.8.2）**：`hasPermissionsToUseTool` 第 8 参 `planFilePath`（`PermissionContext.planFilePath`）；豁免步骤 4.5 在记忆豁免之后、路径危险段之前——精确文件 + `mode === "plan"` + `write_file`/`edit_file`/`read_file` 三工具放行，同目录其它文件照旧段 deny。
-- **装配链（0.8.2）**：`makePlanTools` 的 `onEnter(planFilePath)` 回调 → `cli/index.ts` 写入 `ctx.planFilePath` → `makeCheckPermission` 每判定传 engine（实时读 ctx，模型轮内进入 plan 也生效）→ `repl.ts` 每轮 `runTurn` 把 `ctx.mode`/`ctx.planFilePath` 同步进 `systemCtx` → `context.ts` 动态段在 `mode === "plan"` 注入 plan 专用提示词段（状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束）。
+- **装配链（0.8.2）**：`makePlanTools` 的 `onEnter(planFilePath)` 回调 → `cli/index.ts` 写入 `ctx.planFilePath` → `makeCheckPermission` 每判定传 engine（实时读 ctx，模型轮内进入 plan 也生效）→ `repl.ts` 每轮 `runTurn` 把 `ctx.mode`/`ctx.planFilePath` 同步进 `systemCtx` → `context.ts` `buildDynamicContext` 在 `mode === "plan"` 注入 plan 专用提示词段（状态确认 + 只读纪律 + explore 引导 + 计划文件路径 + 收束；V8.3 起随动态上下文块进 messages，不再进 system）。
 - **编辑后批准（0.8.2）**：`resolveAsk` 返回 `PermissionCheckResult`（可含 `updatedInput`），exit 弹窗菜单 `EXIT_OPTIONS` 四项；`execute.ts` 在 allow 且携带 updatedInput 时并入 `item.input` 再走工具（重新 zod 校验）；编辑器经 `openSystemEditor`（`src/utils/editor.ts`）注入，测试用 fake。

@@ -57,7 +57,7 @@ V5 里程碑 2。run-agent 通过 [`@modelcontextprotocol/sdk`](https://github.c
 
 ## 启动预连
 
-- 启动即连接所有 `enabled` server（配置驱动，无手动/按需模式）。system prompt 动态段注入一行：`MCP servers 已配置: filesystem(stdio), github(http) — 启动即连接，其工具可直接以 mcp__<server>__<tool> 调用（连接失败的 server 可让用户用 /mcp 查看并用 /mcp connect 重连）`。
+- 启动即连接所有 `enabled` server（配置驱动，无手动/按需模式）。动态上下文块注入一行（V8.3 起在 messages、随每轮用户 query 前插入，不再进 system）：`MCP servers 已配置: filesystem(stdio), github(http) — 启动即连接，其工具可直接以 mcp__<server>__<tool> 调用（连接失败的 server 可让用户用 /mcp 查看并用 /mcp connect 重连）`。
 - 连接成功 → `tools/list` → 每个工具包装成标准 `Tool` 注册进池，**第一轮起**模型即可调用 `mcp__<server>__<tool>`（工具列表每轮从池里重建，天然动态）。
 - 连接失败/401 **不阻断启动**：各自进 `failed`/`needs-auth` 态；用户可 `/mcp connect <name>` 手动重连。
 - 连接是配置动作：用户写好配置 = 已授权；项目级配置仅 Trust 加载是第二道门。连接不是逐次工具调用，无需单独的工具级权限。

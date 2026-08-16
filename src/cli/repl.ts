@@ -1,6 +1,10 @@
 import * as readline from "node:readline";
 import { COMPACT_MIN_MESSAGES, maybeAutoCompact } from "../core/compact.js";
-import { buildSystemPrompt } from "../core/context.js";
+import {
+  DYNAMIC_CONTEXT_MARKER,
+  buildDynamicContext,
+  buildSystemPrompt,
+} from "../core/context.js";
 import type { SystemContext } from "../core/context.js";
 import { decisionOf } from "../core/execute.js";
 import type { PermissionCheckResult } from "../core/execute.js";
@@ -280,6 +284,19 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<Ru
   await runSessionHook(opts.hookManager, "start", emit);
 
   const messages: LLMMessage[] = [...(opts.initialMessages ?? [])];
+  // V8.3 决策：时间戳等全部动态上下文移入 messages——system 保持字节稳定（DeepSeek 前缀缓存
+  // 从 token 0 命中），动态块作为独立 user 消息插在用户 query 前。one-shot 单轮，无需清理历史。
+  if (opts.systemCtx) {
+    const dynamic = await buildDynamicContext(opts.systemCtx);
+    if (dynamic) {
+      const block: LLMMessage = {
+        role: "user",
+        content: `${DYNAMIC_CONTEXT_MARKER}（系统注入，非用户输入）\n\n${dynamic}`,
+      };
+      messages.push(block);
+      await appendMessage(opts.sessionFile, block);
+    }
+  }
   messages.push({ role: "user", content: prompt });
   await appendMessage(opts.sessionFile, messages[messages.length - 1]!);
 
@@ -318,7 +335,7 @@ export async function runOneShot(opts: AgentOptions, prompt: string): Promise<Ru
 
 const HELP = [
   "run-agent REPL — 直接输入 prompt 开始，agent 会读/写/改/搜/执行并汇报。",
-  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入只读计划模式 · /mcp 查看/连接 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /tasks 查看后台子 agent · /sessions 查看/切入历史会话 · /help 帮助 · /exit 退出",
+  "  命令: /clear 清空上下文 · /compact 压缩上下文 · /plan 进入/退出只读计划模式 · /mcp 查看/连接 MCP server · /skills 列出技能 · /commands 列出自定义命令 · /tasks 查看后台子 agent · /sessions 查看/切入历史会话 · /help 帮助 · /exit 退出",
 ].join("\n");
 
 /** V6 决策 B3/C2：内置斜杠命令集合——技能/自定义命令与内置冲突时内置优先。 */
@@ -340,7 +357,7 @@ const BUILTIN_SLASH = new Set([
 export async function runRepl(opts: AgentOptions): Promise<void> {
   const out = opts.out ?? process.stdout;
   let messages: LLMMessage[] = [...(opts.initialMessages ?? [])];
-  // V6 决策 A1：Stop hook 输出注入下一轮 system（每轮结束刷新）
+  // V6 决策 A1：Stop hook 输出注入下一轮动态上下文块（V8.3 起在 messages、随用户 query 前插入）
   let stopOutput: string | undefined;
   const terminal = Boolean(process.stdin.isTTY);
 
@@ -431,13 +448,10 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
     }
     // V6：统一查询路径——普通 prompt 与 /技能命令都走这里（技能 body 作为 user 消息）
     const runTurn = async (promptText: string): Promise<void> => {
-      messages.push({ role: "user", content: promptText });
-      await appendMessage(opts.sessionFile, messages[messages.length - 1]!);
       opts.skillRegistry?.resetActive(); // V6 决策 B2：turn 边界重置活跃技能
-      // 每轮重建 system（日期/git 动态部分刷新；git 有 3s TTL 缓存）。
-      // V6 决策 A1：上一轮 Stop hook 输出注入动态段（hookOutput）。
       // V8 决策 J（#4）：plan 专用提示词段按当前权限模式注入——模型可经 enter_plan_mode 在
-      // 轮内进入 plan，systemCtx 是启动时快照，须每轮从 ctx 同步 mode/planFilePath 再重建。
+      // 轮内进入 plan，systemCtx 是启动时快照，须每轮从 ctx 同步 mode/planFilePath。
+      // V8.3 起该信息进动态块（messages），不再进 system。
       if (opts.systemCtx && opts.ctx) {
         opts.systemCtx.mode = opts.ctx.mode;
         // exactOptionalPropertyTypes：可选属性不能直接赋 undefined——有则写、无则删（回到未注入态）
@@ -447,12 +461,37 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
           delete opts.systemCtx.planFilePath;
         }
       }
-      const system = opts.systemCtx
-        ? await buildSystemPrompt(
+      // system 只保留字节稳定部分（角色准则 + 记忆索引）——每轮重建但字节不变。DeepSeek 自动
+      // 前缀缓存从 token 0 命中，system 前缀一字节变化都会让整段（含 messages 历史）以全价 miss。
+      const system = opts.systemCtx ? await buildSystemPrompt(opts.systemCtx) : undefined;
+      // V8.3 决策：时间戳等全部动态上下文移入 messages——每轮用户 query 前插入独立 user 消息。
+      // V6 决策 A1：上一轮 Stop hook 输出经 hookOutput 进动态块（每轮可变）。
+      const dynamic = opts.systemCtx
+        ? await buildDynamicContext(
             opts.systemCtx,
             stopOutput !== undefined ? { hookOutput: stopOutput } : {},
           )
         : undefined;
+      if (dynamic) {
+        // 清理历史里上一轮注入的动态消息（含 resume 加载的旧快照），不累积多条"当前时间"。
+        // 动态块始终紧跟用户 query 前，过滤掉后历史回到干净状态再插新的。
+        messages = messages.filter(
+          (m) =>
+            !(
+              m.role === "user" &&
+              typeof m.content === "string" &&
+              m.content.startsWith(DYNAMIC_CONTEXT_MARKER)
+            ),
+        );
+        const block: LLMMessage = {
+          role: "user",
+          content: `${DYNAMIC_CONTEXT_MARKER}（系统注入，非用户输入）\n\n${dynamic}`,
+        };
+        messages.push(block);
+        await appendMessage(opts.sessionFile, block);
+      }
+      messages.push({ role: "user", content: promptText });
+      await appendMessage(opts.sessionFile, messages[messages.length - 1]!);
       const result = await runQuery(messages, {
         ...queryOpts(opts, system),
         ...(checkPermission ? { checkPermission } : {}),
@@ -461,7 +500,7 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
       });
       out.write("\n");
 
-      // V6 决策 A1：Stop hook——每轮结束触发，输出注入下一轮 system
+      // V6 决策 A1：Stop hook——每轮结束触发，输出注入下一轮动态上下文块
       if (opts.hookManager) {
         const hookOut = await opts.hookManager.onStop(result.reply);
         stopOutput = hookOut ?? undefined;
@@ -679,6 +718,13 @@ export async function runRepl(opts: AgentOptions): Promise<void> {
             out.write("当前会话不支持 plan 模式（仅交互 REPL）\n");
             break;
           }
+          // V8：/plan 是 toggle——plan 下再敲 = 手动退出，直接恢复进入前的模式。
+          // 退出是用户主动操作（进是自愿降权、退是自主提权），不再走 exit_plan_mode 审批弹窗。
+          if (opts.planMode.exitPlanManually()) {
+            out.write("已退出 plan 模式，恢复进入前的权限模式\n");
+            break;
+          }
+          // 进入路径（上面退出 no-op 时 mode != plan，正常必然成功；守卫兜底）
           if (!opts.planMode.enterPlanManually()) {
             out.write("已在 plan 模式：用 exit_plan_mode 呈现计划，批准后自动恢复\n");
             break;

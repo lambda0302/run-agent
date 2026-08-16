@@ -464,6 +464,8 @@ async function main(prompt: string | undefined, opts: CliOpts): Promise<void> {
       cwd,
       isTrusted,
       bare: Boolean(opts.bare),
+      // V8-P2：提取子 agent 读权限沿主引擎管线判定——透传会话规则(用户级 + Trust 项目级)
+      rules: ctx.rules,
       client,
       // 父级池懒取：触发在轮末，届时 agentTools() 已刷新 poolRef（含 MCP 已连接工具 + remember）
       parentTools: () => poolRef(),

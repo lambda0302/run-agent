@@ -30,6 +30,29 @@
   `/mcp connect <name>` 手动重连。连接时**保留 server 全量 JSON Schema** 注入工具 spec（模型可见真实
   入参结构，替换懒 `{type:"object"}` 占位），server 没给 schema 才回退 `z.record` 通配。
 
+## [Unreleased]
+
+### Added
+
+- **remember 记忆写豁免**（V8 决策，用户拍板）：engine 第 4.6 步记忆写专属通道——Trust 门控下
+  default/acceptEdits/plan **全模式 allow**（写目标由工具内部硬编码、无路径入参可诱导，防护靠工具
+  契约而非弹窗）；未 Trust 走兜底 ask/plan deny；用户 deny 规则仍最高。
+- **`/plan` 是 toggle**：plan 下再敲 `/plan` 直接退出、恢复进入前的模式（`exitPlanManually()`）——
+  用户主动操作（进=自愿降权、退=自主提权），**不经 `exit_plan_mode` 审批弹窗**。已写入盘的计划文件
+  保留、未写不补写；模型卡住/改主意时的逃生门。
+
+### Changed
+
+- **动态上下文移入 messages（system 前缀字节稳定）**：system prompt 只保留字节稳定部分（角色准则 +
+  CLAUDE.md 记忆 + MEMORY.md 索引）；时间戳 / 工作目录 / git / plan 引导 / MCP·skills 清单 / Stop hook
+  输出等全部动态上下文由 `buildDynamicContext` 产出，REPL / one-shot 每轮作为独立 user 消息
+  （`DYNAMIC_CONTEXT_MARKER` 前缀）插在**用户 query 前**。DeepSeek 自动前缀缓存从 token 0 命中：
+  system 前缀一字节不变，动态块在缓存点之后追加不破坏前缀。动态消息随会话持久化，resume 后每轮
+  自动清理旧快照并插入新的。
+- **extractMemories 权限收敛（V8-P2）**：提取子 agent 只读三件套（read_file/glob/grep）**不再无条件
+  allow**，改走主引擎单线管线 `hasPermissionsToUseTool`——记忆豁免/路径危险段/cwd 边界/用户规则全
+  生效；后台 ask→deny → 只读范围收敛为「记忆目录 + 项目内」。
+
 ## [0.8.1] - 2026-08-15
 
 ### Added

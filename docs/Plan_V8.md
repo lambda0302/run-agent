@@ -220,7 +220,7 @@
 - **真实模型手动验证(需 key)**:六分类下 REPL 实际弹窗行为、verification 放行/拒绝、R0 自动放行、plan 下危险段 deny;`/sessions` 方向键菜单与 `--list`/`--resume <id>` 实机验证。每个版本验收尾项。
 - **REPL 兜底抛错无接盘(待修)**:compact 兜底链最终 `throw e`(`query.ts:271` / `:298` 抛出的 context_too_long 原始错误)在 REPL 下无 catch 接盘——`runTurn`(`repl.ts:418`)→ `processPrompt` → `dequeue`(`repl.ts:690-701`,仅 try/finally)→ `void dequeue()` 成 **unhandledRejection**,全项目无 `unhandledRejection` 处理器 → Node 20+ 默认 throw → **整个 REPL 进程崩溃退出**。headless 有接盘(非 json:`index.ts:99-106` 打印 `✗` 退出 1;`--json`:`runHeadless` 进 `errors[]`);子 agent 最健壮(`execute.ts:188` catch 成 `工具执行错误` 回填主循环)。修复方向:给 REPL 的 turn 加顶层 catch(渲染红字错误 + 保留 REPL 存活 + 恢复 `promptLine`),或注册全局 `unhandledRejection` 兜底。**已记录为 `docs/Bug_V8.md` V8-P1(待修)**——修复后回填状态与 commit。
 - **V7 权限遗留(`docs/Bug_V7.md` 待修,P1/P3 优先)**:剩余条目修完并入 V8。
-- **子 Agent 权限统一分析(待整理,非 hotfix)**:提取子 agent 的 `makeExtractMemCheckPermission`(`src/services/agents/builtin/extractMemories.ts:37-51`)对 `read_file`/`glob`/`grep` 无条件 allow,**绕过主权限引擎的路径危险段判定**(`src/permissions/engine.ts` P1),而 `src/tools/read.ts:30` 的 read_file 工具本身零路径校验——安全完全依赖 checkPermission。理论漏洞面:增量消息夹带的提示注入可诱导提取器读任意敏感路径。当前缓解仅靠 Trust 门控 + 4 工具白名单。**推迟原因**:与子 Agent 系统相关,待后续整理子 Agent 时把 extractMemories / explore / verification / 自定义类型**所有内置子 agent 的权限统一分析和控制**(含只读 allow 范围、路径白名单),不单独修。
+- **子 Agent 权限统一分析(2026-08-16 完成)**:提取子 agent 的 `makeExtractMemCheckPermission`(`src/services/agents/builtin/extractMemories.ts`)对 `read_file`/`glob`/`grep` 无条件 allow、绕过主引擎路径危险段判定的问题已修——只读三件套改走主引擎单线管线 `hasPermissionsToUseTool`(default 模式,记忆豁免/危险段/cwd 边界/用户规则全生效),后台 ask→deny,只读范围收敛为「记忆目录 + 项目内」;`ExtractEngineOptions` 加 `rules`(CLI 透传 `ctx.rules`),def 移除静态 checkPermission。**统一分析结论**:内置子 agent 权限现全部走主引擎或专门策略(explore 只读四件套继承父级 / verification 专门策略 / general-purpose·自定义继承父级 / extractMemories 主引擎管线),无第二处无条件 allow。记录:`docs/Bug_V8.md` V8-P2(已解决)。
 - **后续系统能力完善桶**:权限 / 可靠性 / Bug 修复 / 性能稳定性等工程强化条目在此积累。
 
 ---
@@ -240,7 +240,7 @@
 - [ ] **0.8.1 发布**:bump / tag / `npm publish`(待用户确认后执行)
 - [ ] **真实模型手动验证(需 key)**:六分类弹窗行为、verification 放行/拒绝、R0 自动放行、plan 危险段 deny、`/sessions` 菜单实机(验收尾项)
 - [ ] **REPL 兜底抛错无接盘**:修复(已记录 `docs/Bug_V8.md` V8-P1)
-- [ ] **子 Agent 权限统一分析**:与子 Agent 系统整理一并处理
+- [x] **子 Agent 权限统一分析**:extractMemories 只读三件套改走主引擎管线,内置子 agent 权限统一(explore 继承 / verification 专门策略 / extractMemories 主引擎),无第二处无条件 allow(2026-08-16,单测)
 - [x] **0.8.2 计划文件前置**:进入 plan 确定路径 + 模型 write/edit 增量写 + exit 读盘/覆盖 + engine 豁免矩阵(plan 写 plan 文件 allow / 写其它 `.run-agent/**` deny / 非 plan 写 deny / symlink 别名 deny;单测锁定)
 - [x] **0.8.2 explore 引导**:plan 模式 system 动态段注入探索引导、非 plan 不含;子查询经 bridge 继承 plan 只读(单测锁定)
 - [x] **0.8.2 planWasEdited**:审批弹窗「编辑后批准」+ updatedInput 透传 + tool_result 标注「用户已编辑」(单测锁定)
